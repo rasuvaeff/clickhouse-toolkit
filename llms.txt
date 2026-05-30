@@ -1,0 +1,245 @@
+# clickhouse-toolkit
+
+> PHP 8.3+ ClickHouse toolkit: client factory, file migrations, a
+> yiisoft/data-filter → parameterized-SQL query builder, an immutable
+> DataReader (yiisoft/data DataReaderInterface), and a batched writer.
+> Composer: `rasuvaeff/clickhouse-toolkit`. Namespace: `Rasuvaeff\ClickHouseToolkit\`.
+> This file is a self-contained reference for LLMs — enough to USE the package
+> correctly without reading the source.
+
+## Install
+
+```bash
+composer require rasuvaeff/clickhouse-toolkit
+# plus any PSR-18 client + PSR-17 factories (auto-discovered):
+composer require guzzlehttp/guzzle
+```
+
+## Rules that prevent bugs (read first)
+
+- VALUES are always bound parameters — safe. Never string-concat user values.
+- IDENTIFIERS (table, columns, allowedFields, fieldTypes) are NOT escaped; they
+  are validated as plain identifiers. Pass only TRUSTED names, never raw user
+  input. `db.table` allowed; expressions (`toDate(x)`) rejected.
+- The query builder is NOT an ACL layer: disallowed/unknown filters are silently
+  dropped (widening). Enforce tenant/owner constraints with a separate, always-
+  present hard-coded WHERE.
+- `orderBy` passed to `buildSelect` and `defaultSort` are trusted raw fragments —
+  use `buildOrderBy()` output or constants.
+
+## Connect
+
+```php
+use Rasuvaeff\ClickHouseToolkit\{ClickHouseClientFactory, ClickHouseConfig};
+
+$client = (new ClickHouseClientFactory(new ClickHouseConfig(
+    host: 'clickhouse', port: 8123, database: 'app',
+    username: 'default', password: '', secure: false,
+)))->create(); // returns SimPod\ClickHouseClient\Client\PsrClickHouseClient
+
+// For timeouts/retries/TLS, inject your own PSR-18 client:
+// new ClickHouseClientFactory($config, httpClient: new GuzzleHttp\Client(['timeout' => 10]))
+```
+
+`ClickHouseConfig` validates host/port(1-65535); IPv6 hosts are bracketed.
+Auth + database go in `X-ClickHouse-*` headers, never the URL.
+
+## Query builder
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseDataType as T;
+use SimPod\ClickHouseClient\Format\JsonEachRow;
+use Yiisoft\Data\Reader\Filter\{All,AndX,OrX,Equals,GreaterThan,GreaterThanOrEqual,
+    LessThan,LessThanOrEqual,In,Between,Like,Not,EqualsNull,None};
+use Yiisoft\Data\Reader\Sort;
+
+$qb = new ClickHouseQueryBuilder(
+    allowedFields: ['id','status','user_id','created_at'], // validated identifiers
+    fieldTypes: ['id'=>T::UInt64,'user_id'=>T::UInt32,'created_at'=>T::DateTime], // default 'String'
+    defaultSort: 'id DESC',
+);
+
+$where = $qb->buildWhere(new AndX(
+    new Equals('status','active'),
+    new In('user_id', [1,2,3]),
+));
+// $where is a WhereClause: ->sql (string), ->params (array<string,mixed>), ->isEmpty(): bool
+
+$sql = $qb->buildSelect(
+    table: 'events',
+    columns: ['id','status'],          // [] => SELECT * ; pass columns to avoid SELECT * on a columnar store
+    where: $where->sql,
+    orderBy: $qb->buildOrderBy(Sort::only(['created_at'])->withOrder(['created_at'=>'desc'])),
+    limit: 50, offset: 0,              // limit null => no LIMIT; negative limit/offset throw
+);
+
+$out = $where->isEmpty()
+    ? $client->select($sql, new JsonEachRow())
+    : $client->selectWithParams($sql, $where->params, new JsonEachRow());
+$rows = $out->data; // list<array<string,mixed>>
+
+$total = (int) ($client->selectWithParams(
+    $qb->buildCount('events', $where->sql), $where->params, new JsonEachRow()
+)->data[0]['cnt'] ?? 0);
+```
+
+Supported filters → SQL:
+- `All` → empty; `None` → `0`; `EqualsNull` → `field IS NULL`
+- `Equals` `=`, `GreaterThan` `>`, `GreaterThanOrEqual` `>=`, `LessThan` `<`, `LessThanOrEqual` `<=`
+- `In(field, values)` → `field IN ({p0:Type},…)`; empty values → `0` (match none)
+- `Between(field, min, max)` → `field BETWEEN {..} AND {..}`
+- `Like(field, value, caseSensitive?, mode?)` → `ILIKE` (or `LIKE`), value bound + wildcard-escaped; `LikeMode` Contains/StartsWith/EndsWith
+- `Not(filter)` (dropped if inner empty); `AndX(...)`, `OrX(...)`
+Param keys are unique per occurrence (`p0,p1,…`) — repeated fields never collide.
+`DateTimeInterface` → `Y-m-d H:i:s`; `bool` → `0/1`.
+
+Builder methods: `buildWhere(?FilterInterface=null): WhereClause`,
+`buildOrderBy(?Sort): string`, `buildSelect(table, columns=[], where='', orderBy=null, ?limit=20, offset=0): string`,
+`buildCount(table, where=''): string`, `buildDistinct(table, column): string`.
+
+Fluent + immutable: `ClickHouseQueryBuilder::create(allowedFields, fieldTypes=[], defaultSort='id DESC')`,
+`->withDefaultSort(string)`, `->withMandatoryFilter(FilterInterface)`, `->withServerTimezone(?string)`,
+`->withVisitor(?ClickHouseFilterVisitor)`.
+
+Timezone: constructor accepts `?string $serverTimezone` (IANA name). When set, DateTimeInterface
+values are converted to that timezone before formatting. Null = use object's own timezone.
+
+Mandatory filters (tenant/owner/ACL): always AND-combined with the user filter and
+NOT subject to the allow-list (their fields need not be in allowedFields; identifiers
+still validated). This is how you enforce access constraints safely:
+```php
+$qb = ClickHouseQueryBuilder::create(['id','status'], ['id'=>T::UInt64])
+    ->withMandatoryFilter(new Equals('tenant_id', $tenantId));
+$where = $qb->buildWhere($userFilter);  // (tenant_id = {p0}) AND (<user>)
+```
+
+Raw expressions: `new ClickHouseRawFilter($sql, $params)` is a FilterInterface emitting
+$sql verbatim (e.g. `'toDate(created_at) = {d:Date}'`). $sql is trusted/never from user
+input; values go in $params using `{name:Type}` placeholders whose names must NOT clash
+with the builder's `p0,p1,…` keys.
+
+## DataReader (pagination-ready, yiisoft/data)
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseDataReader;
+
+$reader = new ClickHouseDataReader(
+    client: $client, table: 'events', queryBuilder: $qb,
+    mapper: static fn (array $row): array => ['id'=>(int)$row['id'],'status'=>(string)$row['status']],
+    columns: ['id','status'],
+);
+$page = $reader->withFilter(new Equals('status','active'))
+    ->withSort(Sort::only(['id'])->withOrder(['id'=>'desc']))
+    ->withLimit(20)->withOffset(40);
+$rows  = $page->read();   // list<TValue> ; readOne(): ?TValue ; getIterator()
+$count = $page->count();  // ignores limit/offset
+// Immutable: every with*() returns a new instance. Negative limit/offset throw.
+// Plugs into yiisoft/data OffsetPaginator/KeysetPaginator.
+```
+
+## Batch writer
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseBatchWriter;
+
+$writer = new ClickHouseBatchWriter($client, 'events', ['id','type','created_at'], batchSize: 1000);
+$writer->write($rows); // iterable<array<string,mixed>>; a generator keeps memory flat
+// Rows are projected onto declared columns (extra keys dropped, missing => null).
+// table/columns validated; failures wrapped in ClickHouseWriteException.
+```
+
+## Type names (optional helper)
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseDataType as T;
+
+T::UInt64; T::String; T::DateTime;                 // constants (plain strings)
+T::nullable(T::String);          // "Nullable(String)"
+T::array(T::nullable(T::String)); // "Array(Nullable(String))"
+T::map(T::String, T::UInt64);     // "Map(String, UInt64)"
+T::decimal(10, 2); T::fixedString(16); T::dateTime64(3, 'UTC');
+T::enum8(['active' => 1, 'inactive' => 2]);        // labels escaped
+```
+Use anywhere a type string is expected (TableBuilder columns, QueryBuilder
+fieldTypes). Enum/timezone composites are for column definitions, not query
+parameter types.
+
+## Create tables (DDL)
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseDataType as T;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseTableBuilder;
+
+ClickHouseTableBuilder::create($client, 'events')   // table optionally db-qualified
+    ->ifNotExists()
+    ->column('id', T::UInt64)                        // name validated; type emitted verbatim
+    ->column('created_at', T::DateTime)
+    ->engine('MergeTree()')
+    ->partitionBy('toYYYYMM(created_at)')
+    ->primaryKey('id')
+    ->orderBy('(created_at, id)')
+    ->execute();                                    // or ->build(): string
+// Table name + column names are validated identifiers; types/engine/expressions
+// are trusted (developer-authored DDL — never from user input).
+```
+
+## Partitions
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHousePartitionManager;
+
+$pm = new ClickHousePartitionManager($client);
+$parts = $pm->getPartitions('events'); // list<{partition, partition_id, rows, bytes}>
+$pm->dropPartition('events', $parts[0]['partition_id']);
+$pm->detachPartition('events', '202401');
+$pm->attachPartition('events', '202401');
+$pm->freezePartition('events', '202401');
+$pm->clearColumnInPartition('events', '202401', 'payload');
+$pm->movePartition('src', 'dst', '202401');     // ALTER TABLE src MOVE PARTITION ID ... TO TABLE dst
+$pm->replacePartition('src', 'dst', '202401');  // ALTER TABLE dst REPLACE PARTITION ID ... FROM src
+// Partitions are addressed by id (from getPartitions) — emitted as escaped
+// `PARTITION ID '…'`; ALTER can't bind params. Table/column names validated.
+```
+
+## Mutations (UPDATE / DELETE)
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMutationBuilder;
+
+$mb = new ClickHouseMutationBuilder($client);
+$mb->update('events', 'status = {st:String}', 'id = {id:UInt64}', ['st' => 'x', 'id' => 2]);
+$mb->delete('events', 'id = {id:UInt64}', ['id' => 5]);
+$mb->waitForMutations('events', 30.0);          // poll system.mutations until done; bool
+$mb->getMutations('events');                    // list<{mutation_id, command, is_done, parts_to_do, latest_fail_reason}>
+$mb->killMutation('events', $mutationId);
+// Mutations are ASYNC. $set/$condition are trusted raw fragments; user values
+// go through {name:Type} bound params (ClickHouse supports params in ALTER).
+// Table names validated; killMutation escapes its string args.
+```
+
+## Migrations
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
+
+$runner = new ClickHouseMigrationRunner($client, __DIR__.'/migrations', logger: $psr3OrNull);
+$applied = $runner->run(); // list<string> of files applied this call; idempotent
+// One SQL statement per file; files run in filename order (001_*.sql, 002_*.sql).
+// Tracks applied files + sha1 checksum in `_migrations` (ReplacingMergeTree).
+// Changed-after-apply or conflicting checksums => ClickHouseMigrationException.
+// No transactions/locks in ClickHouse: run from a single deploy step; prefer
+// idempotent DDL (CREATE TABLE IF NOT EXISTS, ALTER ... ADD COLUMN IF NOT EXISTS).
+```
+
+## Interfaces & exceptions
+
+- `ClickHouseReaderInterface` (findByFilters/countByFilters), `ClickHouseWriterInterface` (write),
+  `ClickHouseMigrationRunnerInterface` (run) — depend on these in app code.
+- `ClickHouseFilterVisitor` — visitor interface with `visit*()` per filter type.
+  `ClickHouseSqlFilterVisitor` is the default SQL-generating implementation (`final`, not extendable).
+  `dispatch(FilterInterface, &$index, $trusted)` routes a filter to the correct visit method.
+  Implement the interface and inject via `->withVisitor($myVisitor)` to customise SQL generation.
+- `AuthenticatingHttpClient` — PSR-18 decorator adding `X-ClickHouse-*` auth headers.
+- `ClickHouseMigrationException`, `ClickHouseWriteException` extend `\RuntimeException`.
+- All public classes are `final`. DI: type-hint `SimPod\ClickHouseClient\Client\ClickHouseClient`.

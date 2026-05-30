@@ -1,0 +1,85 @@
+{
+    "name": "rasuvaeff/clickhouse-toolkit",
+    "description": "ClickHouse toolkit for PHP: client factory, query builder, DataReader, batch writer, DDL builder, partition manager, mutation builder, migration runner, and type helpers.",
+    "license": "BSD-3-Clause",
+    "type": "library",
+    "keywords": [
+        "clickhouse",
+        "yii",
+        "yii3",
+        "query-builder",
+        "migration"
+    ],
+    "authors": [
+        {
+            "name": "Victor Razuvaev",
+            "email": "rasuvaeff@gmail.com"
+        }
+    ],
+    "homepage": "https://github.com/rasuvaeff/clickhouse-toolkit",
+    "support": {
+        "issues": "https://github.com/rasuvaeff/clickhouse-toolkit/issues",
+        "source": "https://github.com/rasuvaeff/clickhouse-toolkit"
+    },
+    "require": {
+        "php": "^8.3",
+        "php-http/discovery": "^1.20",
+        "psr/http-client": "^1.0",
+        "psr/http-factory": "^1.0",
+        "psr/http-message": "^2.0",
+        "psr/log": "^3.0",
+        "simpod/clickhouse-client": "^0.8.3",
+        "yiisoft/data": "^2.0"
+    },
+    "require-dev": {
+        "ergebnis/composer-normalize": "^2.51",
+        "friendsofphp/php-cs-fixer": "^3.95",
+        "guzzlehttp/guzzle": "^7.9",
+        "infection/infection": "^0.29",
+        "maglnet/composer-require-checker": "^4.17",
+        "phpunit/phpunit": "^11.5",
+        "psalm/plugin-phpunit": "^0.19",
+        "rector/rector": "^2.4",
+        "vimeo/psalm": "^6.16"
+    },
+    "suggest": {
+        "guzzlehttp/guzzle": "A PSR-18 client + PSR-17 factories (alternatively symfony/http-client + nyholm/psr7)"
+    },
+    "autoload": {
+        "psr-4": {
+            "Rasuvaeff\\ClickHouseToolkit\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Rasuvaeff\\ClickHouseToolkit\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "ergebnis/composer-normalize": true,
+            "infection/extension-installer": true,
+            "php-http/discovery": true
+        },
+        "sort-packages": true
+    },
+    "scripts": {
+        "build": [
+            "@composer validate --strict",
+            "@composer normalize --dry-run",
+            "@require-checker",
+            "@cs",
+            "@psalm",
+            "@test"
+        ],
+        "cs": "php-cs-fixer fix --dry-run --diff --config=.php-cs-fixer.php",
+        "cs:fix": "php-cs-fixer fix --diff --config=.php-cs-fixer.php",
+        "mutation": "infection --threads=max",
+        "psalm": "psalm --no-cache",
+        "rector": "rector process --dry-run",
+        "rector:fix": "rector process",
+        "require-checker": "composer-require-checker check composer.json",
+        "test": "phpunit",
+        "test:coverage": "phpunit --coverage-text"
+    }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE demo ADD COLUMN IF NOT EXISTS name String

@@ -1,0 +1,2 @@
+ALTER TABLE events
+    ADD INDEX IF NOT EXISTS idx_type type TYPE set(100) GRANULARITY 4

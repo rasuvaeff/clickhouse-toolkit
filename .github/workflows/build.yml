@@ -1,0 +1,120 @@
+name: build
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+
+    services:
+      clickhouse:
+        # Pinned for reproducible CI (LTS). Bump deliberately.
+        image: clickhouse/clickhouse-server:24.8
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_PASSWORD: ch_test
+
+    env:
+      CLICKHOUSE_HOST: 127.0.0.1
+      CLICKHOUSE_PORT: '8123'
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ch_test
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php:
+          - '8.3'
+          - '8.4'
+          - '8.5'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          extensions: json
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Wait for ClickHouse
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs -H 'X-ClickHouse-User: default' -H 'X-ClickHouse-Key: ch_test' \
+              --data-binary 'SELECT 1' http://127.0.0.1:8123/ | grep -q '^1$'; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ClickHouse did not become ready in time" >&2
+          exit 1
+
+      - name: Build
+        run: composer build
+
+  coverage:
+    name: Coverage & Mutation
+    runs-on: ubuntu-latest
+
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_PASSWORD: ch_test
+
+    env:
+      CLICKHOUSE_HOST: 127.0.0.1
+      CLICKHOUSE_PORT: '8123'
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ch_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: pcov
+          extensions: json
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Wait for ClickHouse
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs -H 'X-ClickHouse-User: default' -H 'X-ClickHouse-Key: ch_test' \
+              --data-binary 'SELECT 1' http://127.0.0.1:8123/ | grep -q '^1$'; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ClickHouse did not become ready in time" >&2
+          exit 1
+
+      - name: Test with coverage
+        run: composer test:coverage
+
+      - name: Mutation testing
+        run: composer mutation
