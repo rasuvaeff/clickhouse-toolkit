@@ -80,6 +80,7 @@
         "rector:fix": "rector process",
         "require-checker": "composer-require-checker check composer.json",
         "test": "phpunit",
-        "test:coverage": "phpunit --coverage-text"
+        "test:coverage": "phpunit --coverage-text --coverage-clover=build/coverage.xml",
+        "test:coverage:ci": "phpunit --coverage-clover=build/coverage.xml"
     }
 }

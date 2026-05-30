@@ -4,8 +4,10 @@
         "directories": ["src"]
     },
     "logs": {
-        "text": "php://stderr"
+        "text": "php://stderr",
+        "summary": "build/infection-summary.log"
     },
+    "minMsi": 80,
     "phpUnit": {
         "configDir": "."
     },

@@ -114,7 +114,14 @@ jobs:
           exit 1
 
       - name: Test with coverage
-        run: composer test:coverage
+        run: composer test:coverage:ci
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: build/coverage.xml
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Mutation testing
         run: composer mutation
