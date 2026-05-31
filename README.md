@@ -8,7 +8,13 @@
 [![Psalm level](https://img.shields.io/badge/psalm-level_1-blue.svg)](https://github.com/rasuvaeff/clickhouse-toolkit/actions/workflows/static-analysis.yml)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE.md)
 
-Lightweight, framework-agnostic ClickHouse helpers for PHP applications:
+Lightweight, framework-agnostic ClickHouse helpers for PHP applications.
+
+```php
+$qb = new ClickHouseQueryBuilder(allowedFields: ['id', 'status'], fieldTypes: ['id' => T::UInt64]);
+$where = $qb->buildWhere(new Equals('status', 'active'));
+$sql = $qb->buildSelect(table: 'events', where: $where->sql, limit: 20);
+```
 
 - **`ClickHouseClientFactory`** + **`ClickHouseConfig`** — build a configured client over any PSR-18 HTTP client (auto-discovered or injected; HTTP/HTTPS).
 - **`ClickHouseQueryBuilder`** — turn [`yiisoft/data`](https://github.com/yiisoft/data) filters and sort into safe, parameterized SQL.

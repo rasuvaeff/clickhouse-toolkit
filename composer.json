@@ -1,6 +1,6 @@
 {
     "name": "rasuvaeff/clickhouse-toolkit",
-    "description": "ClickHouse toolkit for PHP: client factory, query builder, DataReader, batch writer, DDL builder, partition manager, mutation builder, migration runner, and type helpers.",
+    "description": "Framework-agnostic ClickHouse toolkit for PHP: parameterized query builder, data reader, batch writer, DDL builder, partition manager, mutation builder, and migration runner.",
     "license": "BSD-3-Clause",
     "type": "library",
     "keywords": [
