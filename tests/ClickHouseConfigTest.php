@@ -43,6 +43,13 @@ final class ClickHouseConfigTest extends TestCase
     }
 
     #[Test]
+    public function acceptsBoundaryPorts(): void
+    {
+        $this->assertSame('http://127.0.0.1:1', (new ClickHouseConfig(port: 1))->baseUri());
+        $this->assertSame('http://127.0.0.1:65535', (new ClickHouseConfig(port: 65535))->baseUri());
+    }
+
+    #[Test]
     public function rejectsOutOfRangePort(): void
     {
         $this->expectException(\InvalidArgumentException::class);

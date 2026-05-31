@@ -69,6 +69,38 @@ final class ClickHouseBatchWriterTest extends TestCase
     }
 
     #[Test]
+    public function allowsBatchSizeOne(): void
+    {
+        $sizes = [];
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('insert')->willReturnCallback(
+            static function (Table|string $table, array $values) use (&$sizes): void {
+                $sizes[] = count($values);
+            },
+        );
+
+        (new ClickHouseBatchWriter($client, 'events', ['id'], batchSize: 1))->write([['id' => 1], ['id' => 2]]);
+
+        $this->assertSame([1, 1], $sizes);
+    }
+
+    #[Test]
+    public function defaultBatchSizeIsOneThousand(): void
+    {
+        $sizes = [];
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('insert')->willReturnCallback(
+            static function (Table|string $table, array $values) use (&$sizes): void {
+                $sizes[] = count($values);
+            },
+        );
+
+        (new ClickHouseBatchWriter($client, 'events', ['id']))->write($this->rows(1001));
+
+        $this->assertSame([1000, 1], $sizes);
+    }
+
+    #[Test]
     public function rejectsNonPositiveBatchSize(): void
     {
         $client = $this->createMock(ClickHouseClient::class);

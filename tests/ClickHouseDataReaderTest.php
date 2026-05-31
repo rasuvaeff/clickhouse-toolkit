@@ -142,6 +142,22 @@ final class ClickHouseDataReaderTest extends TestCase
     }
 
     #[Test]
+    public function withFilterReturnsNewReader(): void
+    {
+        $reader = $this->reader([]);
+
+        $this->assertNotSame($reader, $reader->withFilter(new Equals('status', 'active')));
+    }
+
+    #[Test]
+    public function withSortReturnsNewReader(): void
+    {
+        $reader = $this->reader([]);
+
+        $this->assertNotSame($reader, $reader->withSort(Sort::only(['id'])->withOrder(['id' => 'asc'])));
+    }
+
+    #[Test]
     public function getIteratorYieldsRows(): void
     {
         $reader = $this->reader([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]);
