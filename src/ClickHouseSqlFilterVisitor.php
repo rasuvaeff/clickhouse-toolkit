@@ -108,17 +108,24 @@ final readonly class ClickHouseSqlFilterVisitor implements ClickHouseFilterVisit
             return ['', []];
         }
 
+        $value = (string) $filter->value;
+        if ($value === '') {
+            return ['', []];
+        }
+
         $key = 'p' . $index++;
         $operator = $filter->caseSensitive === true ? 'LIKE' : 'ILIKE';
-        $escaped = addcslashes((string) $filter->value, '%_\\');
+        $escaped = addcslashes($value, '%_\\');
         $pattern = match ($filter->mode) {
             LikeMode::StartsWith => $escaped . '%',
             LikeMode::EndsWith => '%' . $escaped,
             LikeMode::Contains => '%' . $escaped . '%',
         };
+        $type = $this->fieldTypes[$filter->field] ?? ClickHouseDataType::String;
+        $field = $this->isStringLikeType($type) ? $filter->field : sprintf('toString(%s)', $filter->field);
 
         return [
-            sprintf('%s %s {%s:%s}', $filter->field, $operator, $key, ClickHouseDataType::String),
+            sprintf('%s %s {%s:%s}', $field, $operator, $key, ClickHouseDataType::String),
             [$key => $pattern],
         ];
     }
@@ -301,5 +308,16 @@ final readonly class ClickHouseSqlFilterVisitor implements ClickHouseFilterVisit
         }
 
         return $value;
+    }
+
+    private function isStringLikeType(string $type): bool
+    {
+        $normalized = str_replace(' ', '', $type);
+
+        while (preg_match('/^(Nullable|LowCardinality)\((.*)\)$/', $normalized, $matches) === 1) {
+            $normalized = $matches[2];
+        }
+
+        return $normalized === ClickHouseDataType::String || str_starts_with($normalized, 'FixedString(');
     }
 }

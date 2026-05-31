@@ -171,7 +171,7 @@ Translates `yiisoft/data` filters and sort into parameterized ClickHouse SQL. Th
 public function __construct(
     private array $allowedFields,            // list<string>
     private array $fieldTypes = [],          // field => ClickHouse type, default "String" (use ClickHouseDataType constants)
-    private string $defaultSort = 'id DESC',
+    private string $defaultSort = '', // no ORDER BY by default; pass e.g. 'id DESC' for stable pagination
     private ?FilterInterface $mandatoryFilter = null,
     private ?string $serverTimezone = null,  // IANA timezone; DateTime values are converted before formatting
 ) {}
@@ -180,8 +180,8 @@ public function __construct(
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `buildWhere(FilterInterface $filter)` | `WhereClause` | `{sql, params}`; `sql` is empty when nothing matched. |
-| `buildOrderBy(?Sort $sort)` | `string` | ORDER BY (allow-list-checked), or `defaultSort`. |
-| `buildSelect(string $table, array $columns = [], string $where = '', ?string $orderBy = null, ?int $limit = 20, int $offset = 0)` | `string` | `columns` empty → `SELECT *`; `limit` null → no LIMIT/OFFSET. |
+| `buildOrderBy(?Sort $sort)` | `string` | ORDER BY fragment (allow-list-checked), or `defaultSort`; empty string means no `ORDER BY`. |
+| `buildSelect(string $table, array $columns = [], string $where = '', ?string $orderBy = null, ?int $limit = 20, int $offset = 0)` | `string` | `columns` empty → `SELECT *`; empty order → no `ORDER BY`; `limit` null → no LIMIT/OFFSET. |
 | `buildCount(string $table, string $where = '')` | `string` | `SELECT count() AS cnt FROM ...`. |
 | `buildDistinct(string $table, string $column)` | `string` | `SELECT DISTINCT col FROM ... ORDER BY col`. |
 
@@ -199,7 +199,7 @@ public function __construct(
 | `EqualsNull`          | `field IS NULL` | no params |
 | `In`                  | `field IN ({p0:Type}, {p1:Type}, …)` | empty values → `0` (match nothing) |
 | `Between`             | `field BETWEEN {p0:Type} AND {p1:Type}` | |
-| `Like`                | `field ILIKE {p0:String}` (or `LIKE` if `caseSensitive`) | value bound + wildcard-escaped; honours `LikeMode` Contains/StartsWith/EndsWith |
+| `Like`                | `field ILIKE {p0:String}` (or `LIKE` if `caseSensitive`) | non-string fields are wrapped in `toString(field)`; empty values are dropped; value bound + wildcard-escaped; honours `LikeMode` Contains/StartsWith/EndsWith |
 | `Not`                 | `NOT (...)` | dropped if the inner filter is empty |
 | `AndX` / `OrX`        | `(a AND/OR b …)` | empty sub-filters skipped |
 
@@ -338,7 +338,7 @@ ClickHouseTableBuilder::create($client, 'events')
     ->engine('MergeTree()')
     ->partitionBy('toYYYYMM(created_at)')
     ->primaryKey('id')
-    ->orderBy('(created_at, id)')
+    ->orderBy('(id, created_at)')
     ->execute();
 ```
 
@@ -458,7 +458,7 @@ not query-parameter types.
 
 ### Timezone handling
 
-`ClickHouseQueryBuilder` accepts an optional `serverTimezone` (IANA name, e.g. `"UTC"`, `"Europe/Moscow"`). When set, `DateTimeInterface` filter values are converted to that timezone before being formatted as `Y-m-d H:i:s`. Without it, the object's own timezone is used (backward compatible).
+`ClickHouseQueryBuilder` accepts an optional `serverTimezone` (IANA name, e.g. `"UTC"`, `"Europe/Moscow"`). When set, `DateTimeInterface` filter values are converted to that timezone before being formatted as `Y-m-d H:i:s`. This applies to filters whose value is a `DateTimeInterface` object (`Equals`, comparisons, `Between`); `In` values are scalar/string values and are passed as provided. Without `serverTimezone`, the object's own timezone is used (backward compatible).
 
 ```php
 $qb = new ClickHouseQueryBuilder(
@@ -512,10 +512,10 @@ See [`examples/di-container.php`](examples/di-container.php) for a runnable plai
 - **Allow-list enforcement.** `ClickHouseQueryBuilder` only emits allow-listed fields in `WHERE` and `ORDER BY` (each `allowedFields` entry is validated as an identifier at construction). Pass user-controlled filter/sort objects straight through — unknown fields are dropped.
 - **Disallowed user filters are silently dropped** (widening, not narrowing). For mandatory tenant/owner/ACL constraints do **not** rely on user filters — use `withMandatoryFilter()`, which is always applied and AND-combined so the user filter can only narrow within it.
 - **Bound parameters.** All comparison/`In`/`Between`/`Like` values are passed as ClickHouse bound parameters (`{pN:Type}`) with unique keys; values are never concatenated into SQL.
-- **`Like` escaping.** `Like` values are wildcard-escaped (`addcslashes($value, '%_\\')`) and bound as a parameter — the quote is not escaped (it lives in the parameter, not the SQL).
+- **`Like` escaping.** `Like` values are wildcard-escaped (`addcslashes($value, '%_\\')`) and bound as a parameter — the quote is not escaped (it lives in the parameter, not the SQL). Empty `Like` values are dropped. Non-string fields are compared as `toString(field) LIKE/ILIKE {pN:String}` so user filters cannot make ClickHouse reject numeric/date columns.
 - **Table/column names** passed to `buildSelect`/`buildCount`/`buildDistinct` and the `columns` projection are **not** escaped, but they are **validated** as plain SQL identifiers (`db.table` allowed); a malformed identifier throws `InvalidArgumentException`. Still pass trusted, plain identifiers — the validator rejects raw expressions (`toDate(x) AS d`), so build those yourself.
 - **Pagination.** `buildSelect` rejects negative `limit`/`offset` with `InvalidArgumentException`.
-- **`orderBy`** passed to `buildSelect`, and the constructor's `defaultSort`, are trusted raw ORDER BY fragments — **not** validated. Use `buildOrderBy()` output (allow-list-checked) or a hard-coded constant; never build them from untrusted input.
+- **`orderBy`** passed to `buildSelect`, and the constructor's non-empty `defaultSort`, are trusted raw ORDER BY fragments — **not** validated. Use `buildOrderBy()` output (allow-list-checked) or a hard-coded constant; never build them from untrusted input. The default `defaultSort` is empty, so generic builders do not assume an `id` column; set one explicitly for stable pagination.
 - **`fieldTypes`** type tokens are validated (allowing parametric types like `Array(Nullable(String))`) so they can't break out of the `{name:Type}` placeholder. They are developer configuration, not user input.
 - **Credentials** travel in `X-ClickHouse-*` headers, not the URL.
 

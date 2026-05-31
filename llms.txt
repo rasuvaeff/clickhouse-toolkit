@@ -24,8 +24,8 @@ composer require guzzlehttp/guzzle
 - The query builder is NOT an ACL layer: disallowed/unknown filters are silently
   dropped (widening). Enforce tenant/owner constraints with a separate, always-
   present hard-coded WHERE.
-- `orderBy` passed to `buildSelect` and `defaultSort` are trusted raw fragments —
-  use `buildOrderBy()` output or constants.
+- `orderBy` passed to `buildSelect` and non-empty `defaultSort` are trusted raw fragments —
+  use `buildOrderBy()` output or constants. Default `defaultSort` is empty (no ORDER BY).
 
 ## Connect
 
@@ -57,7 +57,7 @@ use Yiisoft\Data\Reader\Sort;
 $qb = new ClickHouseQueryBuilder(
     allowedFields: ['id','status','user_id','created_at'], // validated identifiers
     fieldTypes: ['id'=>T::UInt64,'user_id'=>T::UInt32,'created_at'=>T::DateTime], // default 'String'
-    defaultSort: 'id DESC',
+    defaultSort: 'id DESC', // set explicitly when you need stable pagination
 );
 
 $where = $qb->buildWhere(new AndX(
@@ -89,7 +89,7 @@ Supported filters → SQL:
 - `Equals` `=`, `GreaterThan` `>`, `GreaterThanOrEqual` `>=`, `LessThan` `<`, `LessThanOrEqual` `<=`
 - `In(field, values)` → `field IN ({p0:Type},…)`; empty values → `0` (match none)
 - `Between(field, min, max)` → `field BETWEEN {..} AND {..}`
-- `Like(field, value, caseSensitive?, mode?)` → `ILIKE` (or `LIKE`), value bound + wildcard-escaped; `LikeMode` Contains/StartsWith/EndsWith
+- `Like(field, value, caseSensitive?, mode?)` → `ILIKE` (or `LIKE`), non-string fields use `toString(field)`, empty value is dropped; value bound + wildcard-escaped; `LikeMode` Contains/StartsWith/EndsWith
 - `Not(filter)` (dropped if inner empty); `AndX(...)`, `OrX(...)`
 Param keys are unique per occurrence (`p0,p1,…`) — repeated fields never collide.
 `DateTimeInterface` → `Y-m-d H:i:s`; `bool` → `0/1`.
@@ -98,12 +98,13 @@ Builder methods: `buildWhere(?FilterInterface=null): WhereClause`,
 `buildOrderBy(?Sort): string`, `buildSelect(table, columns=[], where='', orderBy=null, ?limit=20, offset=0): string`,
 `buildCount(table, where=''): string`, `buildDistinct(table, column): string`.
 
-Fluent + immutable: `ClickHouseQueryBuilder::create(allowedFields, fieldTypes=[], defaultSort='id DESC')`,
+Fluent + immutable: `ClickHouseQueryBuilder::create(allowedFields, fieldTypes=[], defaultSort='')`,
 `->withDefaultSort(string)`, `->withMandatoryFilter(FilterInterface)`, `->withServerTimezone(?string)`,
 `->withVisitor(?ClickHouseFilterVisitor)`.
 
 Timezone: constructor accepts `?string $serverTimezone` (IANA name). When set, DateTimeInterface
-values are converted to that timezone before formatting. Null = use object's own timezone.
+values in scalar-value filters are converted to that timezone before formatting. `In` values are
+scalar/string values and are passed as provided. Null = use object's own timezone.
 
 Mandatory filters (tenant/owner/ACL): always AND-combined with the user filter and
 NOT subject to the allow-list (their fields need not be in allowedFields; identifiers
@@ -178,7 +179,7 @@ ClickHouseTableBuilder::create($client, 'events')   // table optionally db-quali
     ->engine('MergeTree()')
     ->partitionBy('toYYYYMM(created_at)')
     ->primaryKey('id')
-    ->orderBy('(created_at, id)')
+    ->orderBy('(id, created_at)')
     ->execute();                                    // or ->build(): string
 // Table name + column names are validated identifiers; types/engine/expressions
 // are trusted (developer-authored DDL — never from user input).

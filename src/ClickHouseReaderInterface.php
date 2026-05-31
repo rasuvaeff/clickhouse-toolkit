@@ -12,6 +12,9 @@ use Yiisoft\Data\Reader\Sort;
  */
 interface ClickHouseReaderInterface
 {
+    /**
+     * @return list<array<string, mixed>>
+     */
     public function findByFilters(
         ?FilterInterface $filter = null,
         ?Sort $sort = null,
@@ -19,5 +22,8 @@ interface ClickHouseReaderInterface
         int $offset = 0,
     ): array;
 
+    /**
+     * @return int<0, max>
+     */
     public function countByFilters(?FilterInterface $filter = null): int;
 }

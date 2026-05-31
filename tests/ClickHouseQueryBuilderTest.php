@@ -140,6 +140,24 @@ final class ClickHouseQueryBuilderTest extends TestCase
     }
 
     #[Test]
+    public function likeCastsNonStringFieldToString(): void
+    {
+        $clause = $this->builder->buildWhere(new Like('id', '12'));
+
+        $this->assertSame('toString(id) ILIKE {p0:String}', $clause->sql);
+        $this->assertSame(['p0' => '%12%'], $clause->params);
+    }
+
+    #[Test]
+    public function likeWithEmptyValueIsDropped(): void
+    {
+        $clause = $this->builder->buildWhere(new Like('name', ''));
+
+        $this->assertTrue($clause->isEmpty());
+        $this->assertSame([], $clause->params);
+    }
+
+    #[Test]
     public function likeStartsWithAndEndsWith(): void
     {
         $this->assertSame(['p0' => 'test%'], $this->builder->buildWhere(new Like('name', 'test', mode: LikeMode::StartsWith))->params);
@@ -263,6 +281,14 @@ final class ClickHouseQueryBuilderTest extends TestCase
     }
 
     #[Test]
+    public function orderByNullReturnsEmptyWithoutDefaultSort(): void
+    {
+        $builder = new ClickHouseQueryBuilder(allowedFields: ['id']);
+
+        $this->assertSame('', $builder->buildOrderBy(null));
+    }
+
+    #[Test]
     public function orderByEmptyCriteriaReturnsDefault(): void
     {
         $this->assertSame('id DESC', $this->builder->buildOrderBy(Sort::only([])));
@@ -292,6 +318,16 @@ final class ClickHouseQueryBuilderTest extends TestCase
         $sql = $this->builder->buildSelect(table: 'events', limit: 10, offset: 0);
 
         $this->assertSame('SELECT * FROM events ORDER BY id DESC LIMIT 10 OFFSET 0', $sql);
+    }
+
+    #[Test]
+    public function selectOmitsOrderByWithoutDefaultSort(): void
+    {
+        $builder = new ClickHouseQueryBuilder(allowedFields: ['id']);
+
+        $sql = $builder->buildSelect(table: 'events', limit: 10, offset: 0);
+
+        $this->assertSame('SELECT * FROM events LIMIT 10 OFFSET 0', $sql);
     }
 
     #[Test]

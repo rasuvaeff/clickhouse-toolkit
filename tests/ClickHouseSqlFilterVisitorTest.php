@@ -126,6 +126,24 @@ final class ClickHouseSqlFilterVisitorTest extends TestCase
     }
 
     #[Test]
+    public function dispatchLikeCastsNonStringFieldToString(): void
+    {
+        $index = 0;
+        $result = $this->visitor->visitLike(new Like('id', '12'), $index, false);
+        $this->assertSame('toString(id) ILIKE {p0:String}', $result[0]);
+        $this->assertSame(['p0' => '%12%'], $result[1]);
+    }
+
+    #[Test]
+    public function dispatchLikeWithEmptyValueIsDropped(): void
+    {
+        $index = 0;
+        $result = $this->visitor->visitLike(new Like('status', ''), $index, false);
+        $this->assertSame(['', []], $result);
+        $this->assertSame(0, $index);
+    }
+
+    #[Test]
     public function dispatchLikeStartsWithCaseSensitive(): void
     {
         $index = 0;

@@ -141,6 +141,14 @@ final class ClickHouseIntegrationTest extends TestCase
     }
 
     #[Test]
+    public function ilikeCastsNumericFieldsToString(): void
+    {
+        $reader = $this->reader()->withFilter(new Like('id', '1'));
+
+        $this->assertSame([1], array_column($reader->read(), 'id'));
+    }
+
+    #[Test]
     public function paginationLimitsAndOffsets(): void
     {
         $page = $this->reader()->withLimit(2)->withOffset(2)->read();

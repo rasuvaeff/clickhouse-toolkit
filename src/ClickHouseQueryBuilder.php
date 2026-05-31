@@ -36,7 +36,8 @@ final readonly class ClickHouseQueryBuilder
      * @param array<string, string> $fieldTypes Field => ClickHouse parameter type (default "String"),
      *     e.g. "UInt64", "DateTime", "Array(UInt64)". Validated; not user input.
      * @param string $defaultSort A trusted raw ORDER BY fragment (e.g. "id DESC") used when no
-     *     sort criteria are given. Not validated — never build it from untrusted input.
+     *     sort criteria are given. Empty string disables the default ORDER BY. Not validated —
+     *     never build it from untrusted input.
      * @param FilterInterface|null $mandatoryFilter Always-applied filter (e.g. tenant/ACL),
      *     AND-combined with the user filter and NOT subject to the allow-list. Trusted.
      * @param string|null $serverTimezone IANA timezone name (e.g. "UTC", "Europe/Moscow").
@@ -51,7 +52,7 @@ final readonly class ClickHouseQueryBuilder
     public function __construct(
         private array $allowedFields,
         private array $fieldTypes = [],
-        private string $defaultSort = 'id DESC',
+        private string $defaultSort = '',
         private ?FilterInterface $mandatoryFilter = null,
         private ?string $serverTimezone = null,
         private ?ClickHouseFilterVisitor $customVisitor = null,
@@ -77,7 +78,7 @@ final readonly class ClickHouseQueryBuilder
      * @param list<string> $allowedFields
      * @param array<string, string> $fieldTypes
      */
-    public static function create(array $allowedFields, array $fieldTypes = [], string $defaultSort = 'id DESC'): self
+    public static function create(array $allowedFields, array $fieldTypes = [], string $defaultSort = ''): self
     {
         return new self($allowedFields, $fieldTypes, $defaultSort);
     }
@@ -202,13 +203,17 @@ final readonly class ClickHouseQueryBuilder
             throw new \InvalidArgumentException(sprintf('Offset must not be negative, got %d.', $offset));
         }
 
+        $orderBy ??= $this->defaultSort;
         $sql = sprintf(
-            'SELECT %s FROM %s%s ORDER BY %s',
+            'SELECT %s FROM %s%s',
             $columns === [] ? '*' : implode(', ', $columns),
             $table,
             $where !== '' ? ' WHERE ' . $where : '',
-            $orderBy ?? $this->defaultSort,
         );
+
+        if ($orderBy !== '') {
+            $sql .= ' ORDER BY ' . $orderBy;
+        }
 
         if ($limit !== null) {
             $sql .= sprintf(' LIMIT %d OFFSET %d', $limit, $offset);
