@@ -4,11 +4,17 @@
     "license": "BSD-3-Clause",
     "type": "library",
     "keywords": [
+        "analytics",
+        "batch",
         "clickhouse",
-        "yii",
-        "yii3",
+        "data-reader",
+        "database",
+        "migration",
+        "olap",
         "query-builder",
-        "migration"
+        "toolkit",
+        "yii",
+        "yii3"
     ],
     "authors": [
         {
