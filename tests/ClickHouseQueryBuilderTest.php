@@ -7,6 +7,7 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseFilterVisitor;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseSqlFilterVisitor;
@@ -574,5 +575,69 @@ final class ClickHouseQueryBuilderTest extends TestCase
         ]));
 
         $this->assertSame(['p0' => '2024-01-01 02:00:00', 'p1' => '2024-01-01 05:00:00'], $clause->params);
+    }
+
+    #[Test]
+    public function customVisitorIsUsedForSqlGeneration(): void
+    {
+        $visitor = $this->createMock(ClickHouseFilterVisitor::class);
+        $visitor->method('dispatch')->willReturn(['custom_sql = 1', ['x' => 9]]);
+
+        $builder = ClickHouseQueryBuilder::create(['id'])->withVisitor($visitor);
+        $clause = $builder->buildWhere(new Equals('id', 1));
+
+        $this->assertSame('custom_sql = 1', $clause->sql);
+        $this->assertSame(['x' => 9], $clause->params);
+    }
+
+    #[Test]
+    public function buildOrderByKeepsAllowedFieldAfterDisallowed(): void
+    {
+        $sort = Sort::only(['secret', 'name'])->withOrder(['secret' => 'asc', 'name' => 'asc']);
+
+        // continue (не break): запрещённое поле пропускается, разрешённое после него остаётся.
+        $this->assertSame('name ASC', $this->builder->buildOrderBy($sort));
+    }
+
+    #[Test]
+    public function buildSelectUsesDefaultLimitAndOffset(): void
+    {
+        $this->assertSame(
+            'SELECT * FROM events ORDER BY id DESC LIMIT 20 OFFSET 0',
+            $this->builder->buildSelect(table: 'events'),
+        );
+    }
+
+    #[Test]
+    public function buildSelectAllowsZeroLimit(): void
+    {
+        $this->assertSame(
+            'SELECT * FROM events ORDER BY id DESC LIMIT 0 OFFSET 0',
+            $this->builder->buildSelect(table: 'events', limit: 0),
+        );
+    }
+
+    #[Test]
+    public function buildCountRejectsMalformedTable(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->builder->buildCount(table: 'events; DROP TABLE x');
+    }
+
+    #[Test]
+    public function buildDistinctRejectsMalformedTable(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->builder->buildDistinct(table: 'events; DROP TABLE x', column: 'status');
+    }
+
+    #[Test]
+    public function constructorRejectsEmptyServerTimezone(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new ClickHouseQueryBuilder(allowedFields: ['id'], serverTimezone: '');
     }
 }

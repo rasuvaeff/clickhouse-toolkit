@@ -125,13 +125,56 @@ final class ClickHousePartitionManagerTest extends TestCase
         $result = (new ClickHousePartitionManager($client))->getPartitions('events');
 
         $this->assertSame(['tbl' => 'events'], $capturedParams);
-        $this->assertIsString($capturedSql);
-        $this->assertStringContainsString('currentDatabase()', $capturedSql);
-        $this->assertStringContainsString('table = {tbl:String}', $capturedSql);
+        $this->assertSame(
+            'SELECT partition, partition_id, sum(rows) AS rows, sum(bytes_on_disk) AS bytes '
+            . 'FROM system.parts WHERE active AND database = currentDatabase() AND table = {tbl:String} '
+            . 'GROUP BY partition, partition_id ORDER BY partition',
+            $capturedSql,
+        );
         $this->assertSame([
             ['partition' => '0', 'partition_id' => '0', 'rows' => 10, 'bytes' => 2048],
             ['partition' => '1', 'partition_id' => '1', 'rows' => 5, 'bytes' => 1024],
         ], $result);
+    }
+
+    #[Test]
+    public function getPartitionsRejectsMalformedTable(): void
+    {
+        [$manager] = $this->manager();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $manager->getPartitions('events; DROP TABLE x');
+    }
+
+    #[Test]
+    public function getPartitionsRejectsMalformedQualifiedTable(): void
+    {
+        [$manager] = $this->manager();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $manager->getPartitions('analytics.events; DROP TABLE x');
+    }
+
+    #[Test]
+    public function movePartitionRejectsMalformedTargetTable(): void
+    {
+        [$manager] = $this->manager();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $manager->movePartition('src', 'dst; DROP TABLE x', '1');
+    }
+
+    #[Test]
+    public function replacePartitionRejectsMalformedSourceTable(): void
+    {
+        [$manager] = $this->manager();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $manager->replacePartition('src; DROP TABLE x', 'dst', '1');
     }
 
     #[Test]

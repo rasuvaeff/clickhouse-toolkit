@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseSqlFilterVisitor;
@@ -21,6 +22,7 @@ use Yiisoft\Data\Reader\Filter\LikeMode;
 use Yiisoft\Data\Reader\Filter\None;
 use Yiisoft\Data\Reader\Filter\Not;
 use Yiisoft\Data\Reader\Filter\OrX;
+use Yiisoft\Data\Reader\FilterInterface;
 
 #[CoversClass(ClickHouseSqlFilterVisitor::class)]
 final class ClickHouseSqlFilterVisitorTest extends TestCase
@@ -287,5 +289,119 @@ final class ClickHouseSqlFilterVisitorTest extends TestCase
         $index = 0;
         $result = $this->visitor->visitLessThanOrEqual(new LessThanOrEqual('created_at', '2024-01-01'), $index, false);
         $this->assertSame('created_at <= {p0:DateTime}', $result[0]);
+    }
+
+    #[Test]
+    public function likeStringifiesStringableValueAndAdvancesIndex(): void
+    {
+        $index = 0;
+        $value = new class {
+            public function __toString(): string
+            {
+                return 'abc';
+            }
+        };
+        $result = $this->visitor->visitLike(new Like('status', $value), $index, false);
+
+        $this->assertSame(['p0' => '%abc%'], $result[1]);
+        $this->assertSame(1, $index, 'Индекс параметра должен увеличиваться');
+    }
+
+    #[Test]
+    public function equalsStringifiesStringableValue(): void
+    {
+        $index = 0;
+        $value = new class {
+            public function __toString(): string
+            {
+                return 'abc';
+            }
+        };
+        $result = $this->visitor->visitEquals(new Equals('status', $value), $index, false);
+
+        $this->assertSame(['p0' => 'abc'], $result[1]);
+    }
+
+    #[Test]
+    public function mutableDateTimeIsNotMutatedByNormalization(): void
+    {
+        $visitor = new ClickHouseSqlFilterVisitor(['dt'], ['dt' => 'DateTime'], new \DateTimeZone('UTC'));
+        $index = 0;
+        $dt = new \DateTime('2024-06-15 15:00:00', new \DateTimeZone('Europe/Moscow'));
+
+        $visitor->visitEquals(new Equals('dt', $dt), $index, false);
+
+        $this->assertSame('Europe/Moscow', $dt->getTimezone()->getName(), 'Исходный DateTime не должен мутировать');
+    }
+
+    #[Test]
+    public function likeTreatsNullableStringTypeAsStringWithoutCast(): void
+    {
+        $visitor = new ClickHouseSqlFilterVisitor(['x'], ['x' => 'Nullable(String)']);
+        $index = 0;
+        $result = $visitor->visitLike(new Like('x', 'v'), $index, false);
+
+        $this->assertSame('x ILIKE {p0:String}', $result[0]);
+    }
+
+    #[Test]
+    public function likeNormalizesSpacesInTypeToken(): void
+    {
+        $visitor = new ClickHouseSqlFilterVisitor(['x'], ['x' => 'Nullable( String )']);
+        $index = 0;
+        $result = $visitor->visitLike(new Like('x', 'v'), $index, false);
+
+        $this->assertSame('x ILIKE {p0:String}', $result[0]);
+    }
+
+    #[Test]
+    public function likeTypeMustStartWithNullableToUnwrap(): void
+    {
+        // Leading junk => regex must NOT match (anchored at ^), so the field is not treated as string.
+        $visitor = new ClickHouseSqlFilterVisitor(['x'], ['x' => 'xNullable(String)']);
+        $index = 0;
+        $result = $visitor->visitLike(new Like('x', 'v'), $index, false);
+
+        $this->assertSame('toString(x) ILIKE {p0:String}', $result[0]);
+    }
+
+    #[Test]
+    public function likeTypeMustEndWithClosingParenToUnwrap(): void
+    {
+        // Trailing junk => regex must NOT match (anchored at $), so the field is not treated as string.
+        $visitor = new ClickHouseSqlFilterVisitor(['x'], ['x' => 'Nullable(String)x']);
+        $index = 0;
+        $result = $visitor->visitLike(new Like('x', 'v'), $index, false);
+
+        $this->assertSame('toString(x) ILIKE {p0:String}', $result[0]);
+    }
+
+    #[Test]
+    public function dispatchRoutesEqualsToVisitEquals(): void
+    {
+        $index = 0;
+        $result = $this->visitor->dispatch(new Equals('status', 'active'), $index, false);
+
+        $this->assertSame('status = {p0:String}', $result[0]);
+    }
+
+    #[Test]
+    #[DataProvider('disallowedFieldFilterProvider')]
+    public function disallowedFieldReturnsEmptyPair(FilterInterface $filter): void
+    {
+        $index = 0;
+
+        $this->assertSame(['', []], $this->visitor->dispatch($filter, $index, false));
+    }
+
+    /**
+     * @return iterable<string, array{FilterInterface}>
+     */
+    public static function disallowedFieldFilterProvider(): iterable
+    {
+        yield 'equalsNull' => [new EqualsNull('secret')];
+        yield 'like' => [new Like('secret', 'x')];
+        yield 'in' => [new In('secret', [1])];
+        yield 'between' => [new Between('secret', 1, 2)];
     }
 }
