@@ -7,7 +7,7 @@
         "text": "php://stderr",
         "summary": "build/infection-summary.log"
     },
-    "minMsi": 80,
+    "minMsi": 97,
     "phpUnit": {
         "configDir": "."
     },

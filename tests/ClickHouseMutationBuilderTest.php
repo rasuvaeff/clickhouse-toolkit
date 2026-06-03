@@ -129,4 +129,116 @@ final class ClickHouseMutationBuilderTest extends TestCase
         (new ClickHouseMutationBuilder($this->createMock(ClickHouseClient::class)))
             ->update('events; DROP TABLE x', 'a = {a:UInt8}', '1', ['a' => 1]);
     }
+
+    #[Test]
+    public function deleteRejectsMalformedTable(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        (new ClickHouseMutationBuilder($this->createMock(ClickHouseClient::class)))
+            ->delete('events; DROP TABLE x', '1');
+    }
+
+    #[Test]
+    public function getMutationsRejectsMalformedTable(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        (new ClickHouseMutationBuilder($this->createMock(ClickHouseClient::class)))
+            ->getMutations('events; DROP TABLE x');
+    }
+
+    #[Test]
+    public function killMutationRejectsMalformedTable(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        (new ClickHouseMutationBuilder($this->createMock(ClickHouseClient::class)))
+            ->killMutation('events; DROP TABLE x', 'm1');
+    }
+
+    #[Test]
+    public function getMutationsBuildsSqlAndBindsTable(): void
+    {
+        $sql = null;
+        $params = null;
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('selectWithParams')->willReturnCallback(
+            static function (string $q, array $p) use (&$sql, &$params): Output {
+                $sql = $q;
+                $params = $p;
+
+                return new JsonEachRowOutput('');
+            },
+        );
+
+        (new ClickHouseMutationBuilder($client))->getMutations('events');
+
+        $this->assertSame(
+            'SELECT mutation_id, command, is_done, parts_to_do, latest_fail_reason '
+            . 'FROM system.mutations WHERE database = currentDatabase() AND table = {tbl:String} '
+            . 'ORDER BY create_time DESC',
+            $sql,
+        );
+        $this->assertSame(['tbl' => 'events'], $params);
+    }
+
+    #[Test]
+    public function getMutationsForQualifiedTableBindsDatabaseAndTable(): void
+    {
+        $sql = null;
+        $params = null;
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('selectWithParams')->willReturnCallback(
+            static function (string $q, array $p) use (&$sql, &$params): Output {
+                $sql = $q;
+                $params = $p;
+
+                return new JsonEachRowOutput('');
+            },
+        );
+
+        (new ClickHouseMutationBuilder($client))->getMutations('analytics.events');
+
+        $this->assertStringContainsString('database = {db:String} AND table = {tbl:String}', (string) $sql);
+        $this->assertSame(['db' => 'analytics', 'tbl' => 'events'], $params);
+    }
+
+    #[Test]
+    public function getMutationsCastsParated(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('selectWithParams')->willReturnCallback(
+            static fn(): Output => new JsonEachRowOutput(
+                '{"mutation_id":"m1","command":"c","is_done":"0","parts_to_do":"7","latest_fail_reason":"boom"}',
+            ),
+        );
+
+        $this->assertSame([[
+            'mutation_id' => 'm1',
+            'command' => 'c',
+            'is_done' => false,
+            'parts_to_do' => 7,
+            'latest_fail_reason' => 'boom',
+        ]], (new ClickHouseMutationBuilder($client))->getMutations('events'));
+    }
+
+    #[Test]
+    public function killMutationForQualifiedTableScopesDatabase(): void
+    {
+        $query = null;
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('executeQuery')->willReturnCallback(
+            static function (string $q) use (&$query): void {
+                $query = $q;
+            },
+        );
+
+        (new ClickHouseMutationBuilder($client))->killMutation('analytics.events', 'm1');
+
+        $this->assertSame(
+            "KILL MUTATION WHERE database = 'analytics' AND table = 'events' AND mutation_id = 'm1'",
+            $query,
+        );
+    }
 }

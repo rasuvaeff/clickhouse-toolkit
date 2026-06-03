@@ -183,4 +183,78 @@ final class ClickHouseDataReaderTest extends TestCase
 
         $this->reader([])->withOffset(-1);
     }
+
+    #[Test]
+    public function limitZeroIsAllowed(): void
+    {
+        $this->assertSame(0, $this->reader([])->withLimit(0)->getLimit());
+    }
+
+    #[Test]
+    public function offsetZeroIsAllowed(): void
+    {
+        $this->assertSame(0, $this->reader([])->withOffset(0)->getOffset());
+    }
+
+    #[Test]
+    public function withOffsetReturnsNewReaderAndKeepsOriginal(): void
+    {
+        $reader = $this->reader([]);
+        $modified = $reader->withOffset(7);
+
+        $this->assertNotSame($reader, $modified);
+        $this->assertSame(0, $reader->getOffset(), 'Оригинал не должен меняться');
+        $this->assertSame(7, $modified->getOffset());
+    }
+
+    #[Test]
+    public function countAppliesFilterViaSelectWithParams(): void
+    {
+        $sql = null;
+        $params = null;
+        $reader = $this->reader([['cnt' => 5]], $sql, $params)
+            ->withFilter(new Equals('status', 'active'));
+
+        $this->assertSame(5, $reader->count());
+        $this->assertSame(['p0' => 'active'], $params, 'count с фильтром должен идти через selectWithParams');
+        $this->assertIsString($sql);
+        $this->assertStringContainsString('WHERE status = {p0:String}', $sql);
+    }
+
+    #[Test]
+    public function countReturnsZeroWhenNoRows(): void
+    {
+        $this->assertSame(0, $this->reader([])->count());
+    }
+
+    #[Test]
+    public function countClampsNegativeCountToZero(): void
+    {
+        $this->assertSame(0, $this->reader([['cnt' => -3]])->count());
+    }
+
+    #[Test]
+    public function countCastsStringCountToInt(): void
+    {
+        $this->assertSame(42, $this->reader([['cnt' => '42']])->count());
+    }
+
+    #[Test]
+    public function readAppliesMapperToEachRow(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('select')->willReturn(
+            $this->makeOutput([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]),
+        );
+
+        $reader = new ClickHouseDataReader(
+            client: $client,
+            table: 'events',
+            queryBuilder: $this->queryBuilder(),
+            mapper: static fn(array $row): array => ['ref' => 'r' . (int) $row['id']],
+            columns: ['id', 'status'],
+        );
+
+        $this->assertSame([['ref' => 'r1'], ['ref' => 'r2']], $reader->read());
+    }
 }
