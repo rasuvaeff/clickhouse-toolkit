@@ -68,11 +68,11 @@
             "infection/extension-installer": true,
             "php-http/discovery": true
         },
-        "sort-packages": true,
         "platform": {
             "ext-bcmath": "1.0.0",
             "ext-intl": "1.0.0"
-        }
+        },
+        "sort-packages": true
     },
     "scripts": {
         "bc-check": "roave-backward-compatibility-check",
