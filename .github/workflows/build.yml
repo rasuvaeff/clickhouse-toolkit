@@ -6,6 +6,10 @@ on:
     branches:
       - master
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: PHP ${{ matrix.php }}
@@ -62,6 +66,62 @@ jobs:
           for i in $(seq 1 30); do
             if curl -fs -H 'X-ClickHouse-User: default' -H 'X-ClickHouse-Key: ch_test' \
               --data-binary 'SELECT 1' http://127.0.0.1:8123/ | grep -q '^1$'; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "ClickHouse did not become ready in time" >&2
+          exit 1
+
+      - name: Build
+        run: composer build
+
+  prefer-lowest:
+    name: Prefer lowest
+    runs-on: ubuntu-latest
+
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_PASSWORD: ch_test
+
+    env:
+      CLICKHOUSE_HOST: 127.0.0.1
+      CLICKHOUSE_PORT: '8123'
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ch_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          extensions: json
+          tools: composer:v2
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ runner.os }}-${{ hashFiles('**/composer.json') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: composer update --prefer-lowest --prefer-stable --no-interaction --no-progress
+
+      - name: Wait for ClickHouse
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs -H 'X-ClickHouse-User: default' -H 'X-ClickHouse-Key: ch_test'               --data-binary 'SELECT 1' http://127.0.0.1:8123/ | grep -q '^1$'; then
               echo "ClickHouse is ready"
               exit 0
             fi
@@ -139,3 +199,40 @@ jobs:
 
       - name: Mutation testing
         run: composer mutation
+
+  compatibility:
+    name: Backward compatibility
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: json
+          tools: composer:v2
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ runner.os }}-${{ hashFiles('**/composer.json') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Backward compatibility check
+        run: |
+          LATEST="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -n "$LATEST" ]; then
+            composer bc-check -- --from="$LATEST"
+          else
+            echo "No previous tag - skipping BC check"
+          fi

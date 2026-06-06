@@ -42,21 +42,25 @@ docker run --rm -v "$PWD":/app -w /app composer:2 composer cs:fix
 # Single tool
 docker run --rm -v "$PWD":/app -w /app composer:2 composer psalm
 docker run --rm -v "$PWD":/app -w /app composer:2 composer test
+docker run --rm -v "$PWD":/app -w /app composer:2 composer release-check
+```
 
-# Coverage + mutation testing (requires PCOV/Xdebug — not available in composer:2 image;
-# run in a PHP image with pcov installed, or locally with Xdebug):
-#   php:8.4-cli + pcov: apt-get update && apt-get install -y autoconf build-essential &&
-#     pecl install pcov && docker-php-ext-enable pcov
-docker run --rm -v "$PWD":/app -w /app composer:2 composer test:coverage
-docker run --rm -v "$PWD":/app -w /app composer:2 composer mutation
+Or with Make:
 
-# After changing composer.json (deps/metadata): refresh lock + re-normalize
-docker run --rm -v "$PWD":/app -w /app composer:2 sh -c \
-  'git config --global --add safe.directory /app; composer update -q; composer normalize'
+```bash
+make build
+make cs-fix
+make psalm
+make test
+make test-coverage
+make mutation
+make release-check
 ```
 
 `composer.lock` is gitignored (library). The `git ... dubious ownership` lines
 from cs/normalize are harmless noise.
+`make test-coverage` and `make mutation` bootstrap `pcov` inside the
+`composer:2` container because the base image has no coverage driver.
 
 ## Integration tests (real ClickHouse)
 
@@ -102,7 +106,12 @@ docker rm -f ch-test
   conflict detection. Tamper-evident (checksum mismatch → exception). One SQL
   statement per file; no naive `;` splitting.
 
+- `examples/` is part of the public contract: keep scripts runnable and update
+  `examples/README.md` when example usage changes.
+
 ## When you finish
 
-- Update `README.md` for any user-facing change; update `CHANGELOG.md` if releasing.
-- Re-run `composer build` and the integration suite; paste the output.
+- Update `README.md` (and `examples/` if usage changed); update `CHANGELOG.md`
+  when releasing.
+- Re-run `composer build`; if the change affects the public API or release
+  process, also run `make release-check`. Paste the output.

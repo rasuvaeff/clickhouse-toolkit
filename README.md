@@ -551,13 +551,30 @@ See [`examples/README.md`](examples/README.md) for how to run them.
 
 ## Development
 
+No PHP/Composer on the host — run in Docker via the `composer:2` image:
+
 ```bash
-composer install
-composer build       # validate + normalize + require-checker + cs + psalm + phpunit
-composer test        # phpunit only
-composer cs:fix      # apply php-cs-fixer
-composer psalm       # static analysis (errorLevel=1)
+docker run --rm -v "$PWD":/app -w /app composer:2 composer install
+docker run --rm -v "$PWD":/app -w /app composer:2 composer build
+docker run --rm -v "$PWD":/app -w /app composer:2 composer cs:fix
+docker run --rm -v "$PWD":/app -w /app composer:2 composer test
+docker run --rm -v "$PWD":/app -w /app composer:2 composer release-check
 ```
+
+Or with Make:
+
+```bash
+make install
+make build
+make cs-fix
+make test
+make test-coverage
+make mutation
+make release-check
+```
+
+`make test-coverage` and `make mutation` bootstrap `pcov` inside the
+`composer:2` container because the base image has no coverage driver.
 
 Integration tests in `tests/Integration/` run end-to-end against a real server and are skipped unless `CLICKHOUSE_HOST` is set:
 
