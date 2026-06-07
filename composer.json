@@ -44,8 +44,8 @@
         "infection/infection": "^0.29",
         "maglnet/composer-require-checker": "^4.17",
         "phpunit/phpunit": "^11.5",
-        "psalm/plugin-phpunit": "^0.19",
         "rector/rector": "^2.4",
+        "roave/backward-compatibility-check": "^8.0",
         "vimeo/psalm": "^6.16"
     },
     "suggest": {
@@ -67,9 +67,14 @@
             "infection/extension-installer": true,
             "php-http/discovery": true
         },
+        "platform": {
+            "ext-bcmath": "1.0.0",
+            "ext-intl": "1.0.0"
+        },
         "sort-packages": true
     },
     "scripts": {
+        "bc-check": "roave-backward-compatibility-check",
         "build": [
             "@composer validate --strict",
             "@composer normalize --dry-run",
@@ -84,6 +89,11 @@
         "psalm": "psalm --no-cache",
         "rector": "rector process --dry-run",
         "rector:fix": "rector process",
+        "release-check": [
+            "@build",
+            "@rector",
+            "@bc-check"
+        ],
         "require-checker": "composer-require-checker check composer.json",
         "test": "phpunit",
         "test:coverage": "phpunit --coverage-text --coverage-clover=build/coverage.xml",
