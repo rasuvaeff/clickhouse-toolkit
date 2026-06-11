@@ -3,7 +3,7 @@ DOCKER_HOST := docker run --rm --network host -v "$(PWD)":/app -w /app
 PCOV_BOOTSTRAP := apk add --no-cache $$PHPIZE_DEPS >/dev/null && pecl install pcov >/dev/null && docker-php-ext-enable pcov
 
 .PHONY: build cs cs-fix psalm test mutation rector rector-fix install normalize require-checker \
-       test-coverage test-coverage-ci update-deps release-check bc-check
+       test-coverage test-coverage-ci update-deps release-check bc-check audit-package
 
 install:
 	$(DOCKER) composer install --no-interaction --no-progress --prefer-dist
@@ -80,3 +80,6 @@ help:
 	@echo "  update-deps      composer update + normalize"
 	@echo "  bc-check         check backward compatibility against latest tag"
 	@echo "  release-check    build + rector + bc-check + mutation"
+
+audit-package:
+	@if [ -f ../bin/package-audit ]; then bash ../bin/package-audit "$(CURDIR)"; else echo "package-audit: available only inside the monorepo"; fi
