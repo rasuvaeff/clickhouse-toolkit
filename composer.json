@@ -7,8 +7,10 @@
         "analytics",
         "batch",
         "clickhouse",
+        "console",
         "data-reader",
         "database",
+        "generator",
         "migration",
         "olap",
         "query-builder",
@@ -35,6 +37,7 @@
         "psr/http-message": "^2.0",
         "psr/log": "^3.0",
         "simpod/clickhouse-client": "^0.8.3",
+        "symfony/console": "^7.2",
         "yiisoft/data": "^2.0"
     },
     "require-dev": {

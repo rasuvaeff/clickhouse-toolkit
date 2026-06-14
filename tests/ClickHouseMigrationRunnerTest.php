@@ -10,12 +10,16 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationState;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationStatus;
 use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
 
 #[CoversClass(ClickHouseMigrationRunner::class)]
 #[CoversClass(ClickHouseMigrationException::class)]
+#[CoversClass(ClickHouseMigrationState::class)]
+#[CoversClass(ClickHouseMigrationStatus::class)]
 final class ClickHouseMigrationRunnerTest extends TestCase
 {
     private const string MIGRATIONS_DIR = __DIR__ . '/Fixtures/migrations';
@@ -237,6 +241,153 @@ final class ClickHouseMigrationRunnerTest extends TestCase
         $this->assertSame(['010_a.sql', '020_b.sql', '030_c.sql'], $applied);
     }
 
+    #[Test]
+    public function statusMarksAllFilesAppliedWhenChecksumsMatch(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+            '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
+        ])));
+
+        $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        $this->assertCount(2, $statuses);
+        $this->assertApplied('001_create_demo.sql', '2026-06-14 10:00:00.000000', $statuses[0]);
+        $this->assertApplied('002_add_name.sql', '2026-06-14 11:00:00.000000', $statuses[1]);
+    }
+
+    #[Test]
+    public function statusMarksAllFilesPendingWhenNothingApplied(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('select')->willReturn($this->chOutput(''));
+
+        $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        $this->assertCount(2, $statuses);
+        $this->assertSame(ClickHouseMigrationState::Pending, $statuses[0]->state);
+        $this->assertSame(ClickHouseMigrationState::Pending, $statuses[1]->state);
+        $this->assertNull($statuses[0]->appliedAt);
+        $this->assertNull($statuses[1]->appliedAt);
+    }
+
+    #[Test]
+    public function statusMarksFileDivergedWhenChecksumMismatches(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+            '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
+        ], 'wrong_checksum')));
+
+        $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[0]->state, '001 должен быть Diverged');
+        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[1]->state, '002 должен быть Diverged');
+        $this->assertNotNull($statuses[0]->appliedAt, 'appliedAt должен сохраняться для Diverged');
+    }
+
+    #[Test]
+    public function statusMarksFileDivergedWhenConflictingChecksumsRecorded(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 2],
+        ])));
+
+        $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[0]->state);
+        $this->assertSame('002_add_name.sql', $statuses[1]->name);
+        $this->assertSame(ClickHouseMigrationState::Pending, $statuses[1]->state, '002 отсутствует в _migrations — Pending');
+    }
+
+    #[Test]
+    public function statusMarksRecordedMigrationsMissingWhenFileGone(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+            '099_dropped.sql' => ['2026-06-14 12:00:00.000000', 1],
+        ])));
+
+        $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        // sorted by name: 001 (applied), 002 (pending), 099 (missing)
+        $this->assertCount(3, $statuses);
+        $this->assertSame('001_create_demo.sql', $statuses[0]->name);
+        $this->assertSame(ClickHouseMigrationState::Applied, $statuses[0]->state);
+        $this->assertSame('002_add_name.sql', $statuses[1]->name);
+        $this->assertSame(ClickHouseMigrationState::Pending, $statuses[1]->state);
+        $this->assertSame('099_dropped.sql', $statuses[2]->name);
+        $this->assertSame(ClickHouseMigrationState::Missing, $statuses[2]->state, 'файл удалён, но запись в _migrations осталась');
+        $this->assertNull($statuses[2]->checksum, 'Missing файл не имеет содержимого — checksum null');
+        $this->assertSame('2026-06-14 12:00:00.000000', $statuses[2]->appliedAt, 'appliedAt берётся из _migrations');
+    }
+
+    #[Test]
+    public function statusSortsByNameAcrossAllStates(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        // 000_z.sql recorded but file missing — its name sorts BEFORE files on disk.
+        // Without usort, files-from-glob would come first and 000_z would land last.
+        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
+            '000_z.sql' => ['2026-06-14 09:00:00.000000', 1],
+        ])));
+
+        $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        $names = array_map(static fn(ClickHouseMigrationStatus $s): string => $s->name, $statuses);
+        $this->assertSame(['000_z.sql', '001_create_demo.sql', '002_add_name.sql'], $names);
+    }
+
+    #[Test]
+    public function statusDivergedShowsCurrentFileChecksum(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        // Stored checksum is "wrong" but file is intact — Diverged must expose the file's checksum.
+        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+        ], 'stored_value')));
+
+        $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        $expectedFileChecksum = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/001_create_demo.sql'));
+        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[0]->state);
+        $this->assertSame($expectedFileChecksum, $statuses[0]->checksum, 'Diverged должен показывать checksum текущего файла, не stored');
+    }
+
+    #[Test]
+    public function statusCreatesMigrationsTableBeforeReading(): void
+    {
+        $queries = [];
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('select')->willReturn($this->chOutput(''));
+        $client->method('executeQuery')->willReturnCallback(
+            static function (string $sql) use (&$queries): void {
+                $queries[] = $sql;
+            },
+        );
+
+        (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS `_migrations`', $queries[0]);
+    }
+
+    #[Test]
+    public function statusDoesNotThrowOnDivergedOrConflictingRecords(): void
+    {
+        $client = $this->createMock(ClickHouseClient::class);
+        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 5],
+        ], 'totally_wrong')));
+
+        $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
+
+        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[0]->state, 'status() не должен выбрасывать, в отличие от run()');
+    }
+
     /**
      * @param list<string> $queries Captures executeQuery() SQL by reference.
      */
@@ -286,6 +437,37 @@ final class ClickHouseMigrationRunnerTest extends TestCase
         }
 
         return implode("\n", $rows);
+    }
+
+    /**
+     * Builds the rows returned by {@see ClickHouseMigrationRunner::fetchAppliedRecords()}.
+     *
+     * @param array<string, array{0: string, 1: int}> $records name => [appliedAt, variants]
+     * @param string|null $checksumOverride        use the real file checksum when null.
+     */
+    private function appliedRecordsRows(array $records, ?string $checksumOverride = null): string
+    {
+        $rows = [];
+        foreach ($records as $name => [$appliedAt, $variants]) {
+            $checksum = $checksumOverride ?? @sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/' . $name));
+            $rows[] = sprintf(
+                '{"name":"%s","current_checksum":"%s","current_applied_at":"%s","variants":%d}',
+                $name,
+                $checksum,
+                $appliedAt,
+                $variants,
+            );
+        }
+
+        return implode("\n", $rows);
+    }
+
+    private function assertApplied(string $name, string $appliedAt, ClickHouseMigrationStatus $status): void
+    {
+        $this->assertSame($name, $status->name);
+        $this->assertSame(ClickHouseMigrationState::Applied, $status->state);
+        $this->assertSame($appliedAt, $status->appliedAt);
+        $this->assertNotNull($status->checksum, 'Applied должна иметь checksum из файла');
     }
 
     /**

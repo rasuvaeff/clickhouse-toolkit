@@ -96,10 +96,10 @@ final class ClickHouseClientFactoryTest extends TestCase
         $httpClient = $this->createMock(ClientInterface::class);
         $httpClient->method('sendRequest')->willReturn(new Response(200, [], 'Ok.'));
 
-        $requestFactory = new class ($calls, $inner) implements \Psr\Http\Message\RequestFactoryInterface {
+        $requestFactory = new readonly class ($calls, $inner) implements \Psr\Http\Message\RequestFactoryInterface {
             public function __construct(
-                private readonly \stdClass $calls,
-                private readonly \GuzzleHttp\Psr7\HttpFactory $inner,
+                private \stdClass $calls,
+                private \GuzzleHttp\Psr7\HttpFactory $inner,
             ) {}
 
             #[\Override]
@@ -110,10 +110,10 @@ final class ClickHouseClientFactoryTest extends TestCase
                 return $this->inner->createRequest($method, $uri);
             }
         };
-        $streamFactory = new class ($calls, $inner) implements \Psr\Http\Message\StreamFactoryInterface {
+        $streamFactory = new readonly class ($calls, $inner) implements \Psr\Http\Message\StreamFactoryInterface {
             public function __construct(
-                private readonly \stdClass $calls,
-                private readonly \GuzzleHttp\Psr7\HttpFactory $inner,
+                private \stdClass $calls,
+                private \GuzzleHttp\Psr7\HttpFactory $inner,
             ) {}
 
             #[\Override]
@@ -136,10 +136,10 @@ final class ClickHouseClientFactoryTest extends TestCase
                 return $this->inner->createStreamFromResource($resource);
             }
         };
-        $uriFactory = new class ($calls, $inner) implements \Psr\Http\Message\UriFactoryInterface {
+        $uriFactory = new readonly class ($calls, $inner) implements \Psr\Http\Message\UriFactoryInterface {
             public function __construct(
-                private readonly \stdClass $calls,
-                private readonly \GuzzleHttp\Psr7\HttpFactory $inner,
+                private \stdClass $calls,
+                private \GuzzleHttp\Psr7\HttpFactory $inner,
             ) {}
 
             #[\Override]

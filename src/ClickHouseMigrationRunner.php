@@ -98,6 +98,87 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
         return $result;
     }
 
+    /**
+     * Reports the state of every migration file relative to the `_migrations` table.
+     *
+     * Each file on disk is classified as {@see ClickHouseMigrationState::Applied}
+     * (checksum matches), {@see ClickHouseMigrationState::Pending} (not recorded)
+     * or {@see ClickHouseMigrationState::Diverged} (checksum mismatch, or
+     * conflicting checksums recorded). Recorded migrations whose source file no
+     * longer exists on disk surface as {@see ClickHouseMigrationState::Missing}.
+     *
+     * Unlike {@see run()}, this method never throws on checksum divergence —
+     * it reports the anomaly through the {@see ClickHouseMigrationState::Diverged}
+     * state so the caller can render it in a status report.
+     *
+     * @return list<ClickHouseMigrationStatus> Sorted by migration name.
+     *
+     * @throws ClickHouseMigrationException if the `_migrations` table cannot be read.
+     */
+    public function status(): array
+    {
+        $this->ensureMigrationsTable();
+
+        $records = $this->fetchAppliedRecords();
+
+        $statuses = [];
+
+        foreach ($this->getMigrationFiles() as $file) {
+            $name = basename($file);
+            $sql = file_get_contents($file);
+            $checksum = $sql === false ? null : sha1($sql);
+
+            $record = $records[$name] ?? null;
+
+            $statuses[] = $this->classifyOnDiskMigration(
+                name: $name,
+                fileChecksum: $checksum,
+                record: $record,
+            );
+
+            unset($records[$name]);
+        }
+
+        foreach ($records as $name => $record) {
+            $statuses[] = new ClickHouseMigrationStatus(
+                name: $name,
+                state: ClickHouseMigrationState::Missing,
+                checksum: null,
+                appliedAt: $record['appliedAt'],
+            );
+        }
+
+        usort($statuses, static fn(ClickHouseMigrationStatus $a, ClickHouseMigrationStatus $b): int => strcmp($a->name, $b->name));
+
+        return $statuses;
+    }
+
+    /**
+     * @param array{checksum: string, appliedAt: ?string, variants: int} $record
+     */
+    private function classifyOnDiskMigration(
+        string $name,
+        ?string $fileChecksum,
+        ?array $record,
+    ): ClickHouseMigrationStatus {
+        if ($record === null) {
+            return new ClickHouseMigrationStatus(
+                name: $name,
+                state: ClickHouseMigrationState::Pending,
+                checksum: $fileChecksum,
+            );
+        }
+
+        $diverged = $record['variants'] > 1 || $fileChecksum === null || $fileChecksum !== $record['checksum'];
+
+        return new ClickHouseMigrationStatus(
+            name: $name,
+            state: $diverged ? ClickHouseMigrationState::Diverged : ClickHouseMigrationState::Applied,
+            checksum: $fileChecksum ?? $record['checksum'],
+            appliedAt: $record['appliedAt'],
+        );
+    }
+
     private function ensureMigrationsTable(): void
     {
         // ReplacingMergeTree ORDER BY name collapses duplicate rows for the same
@@ -145,6 +226,39 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
                 ));
             }
             $map[$row['name']] = $row['current_checksum'];
+        }
+
+        return $map;
+    }
+
+    /**
+     * Returns every recorded migration with the latest checksum, the latest
+     * applied_at and the count of distinct checksums. Unlike {@see getApplied()}
+     * this does not throw on checksum conflicts — the caller (status()) reports
+     * them through the {@see ClickHouseMigrationState::Diverged} state.
+     *
+     * @return array<string, array{checksum: string, appliedAt: ?string, variants: int}>
+     *
+     * @throws ClickHouseMigrationException when the `_migrations` table cannot be read.
+     */
+    private function fetchAppliedRecords(): array
+    {
+        /** @var \SimPod\ClickHouseClient\Output\JsonEachRow<array{name: string, current_checksum: string, current_applied_at: string, variants: int|string}> $output */
+        $output = $this->client->select(
+            sprintf(
+                'SELECT name, argMax(checksum, applied_at) AS current_checksum, argMax(applied_at, applied_at) AS current_applied_at, uniqExact(checksum) AS variants FROM `%s` GROUP BY name',
+                self::MIGRATIONS_TABLE,
+            ),
+            new JsonEachRow(),
+        );
+
+        $map = [];
+        foreach ($output->data as $row) {
+            $map[$row['name']] = [
+                'checksum' => $row['current_checksum'],
+                'appliedAt' => $row['current_applied_at'] === '' ? null : $row['current_applied_at'],
+                'variants' => (int) $row['variants'],
+            ];
         }
 
         return $map;

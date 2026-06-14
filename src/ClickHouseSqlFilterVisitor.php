@@ -284,7 +284,7 @@ final readonly class ClickHouseSqlFilterVisitor implements ClickHouseFilterVisit
     private function normalize(bool|\DateTimeInterface|float|int|string|\Stringable $value): string|int|float
     {
         if ($value instanceof \DateTime) {
-            if ($this->serverTimezone !== null) {
+            if ($this->serverTimezone instanceof \DateTimeZone) {
                 $value = (clone $value)->setTimezone($this->serverTimezone);
             }
 
@@ -292,7 +292,7 @@ final readonly class ClickHouseSqlFilterVisitor implements ClickHouseFilterVisit
         }
 
         if ($value instanceof \DateTimeImmutable) {
-            if ($this->serverTimezone !== null) {
+            if ($this->serverTimezone instanceof \DateTimeZone) {
                 $value = $value->setTimezone($this->serverTimezone);
             }
 

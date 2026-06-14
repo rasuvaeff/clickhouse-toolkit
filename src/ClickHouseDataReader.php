@@ -32,9 +32,6 @@ final class ClickHouseDataReader implements DataReaderInterface
     /** @var int<0, max> */
     private int $offset = 0;
 
-    /** @var \Closure(array<string, mixed>): TValue */
-    private \Closure $mapper;
-
     /**
      * @param \Closure(array<string, mixed>): TValue $mapper Maps a raw row to a value.
      * @param list<string> $columns Column projection; empty selects all columns.
@@ -43,10 +40,9 @@ final class ClickHouseDataReader implements DataReaderInterface
         private readonly ClickHouseClient $client,
         private readonly string $table,
         private readonly ClickHouseQueryBuilder $queryBuilder,
-        \Closure $mapper,
+        private readonly \Closure $mapper,
         private readonly array $columns = [],
     ) {
-        $this->mapper = $mapper;
         $this->filter = new All();
     }
 
@@ -81,7 +77,7 @@ final class ClickHouseDataReader implements DataReaderInterface
     }
 
     /**
-     * @param int|null $limit
+     * @param int|null $limit Any non-negative limit; negative values are rejected.
      */
     #[\Override]
     public function withLimit(?int $limit): static
@@ -130,9 +126,6 @@ final class ClickHouseDataReader implements DataReaderInterface
         return $this->fetch(limit: $this->limit, offset: $this->offset);
     }
 
-    /**
-     * @return TValue|null
-     */
     #[\Override]
     public function readOne(): array|object|null
     {

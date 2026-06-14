@@ -97,6 +97,7 @@ final readonly class ClickHouseBatchWriter implements ClickHouseWriterInterface
         } catch (\Throwable $e) {
             throw new ClickHouseWriteException(
                 sprintf('Failed to insert %d row(s) into "%s": %s', count($rows), $this->table, $e->getMessage()),
+                (int) $e->getCode(),
                 previous: $e,
             );
         }
