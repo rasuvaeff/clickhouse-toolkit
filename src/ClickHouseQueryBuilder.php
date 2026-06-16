@@ -91,9 +91,9 @@ final readonly class ClickHouseQueryBuilder
      */
     public function withMandatoryFilter(FilterInterface $filter): self
     {
-        $combined = $this->mandatoryFilter === null
-            ? $filter
-            : new AndX($this->mandatoryFilter, $filter);
+        $combined = $this->mandatoryFilter instanceof FilterInterface
+            ? new AndX($this->mandatoryFilter, $filter)
+            : $filter;
 
         return new self($this->allowedFields, $this->fieldTypes, $this->defaultSort, $combined, $this->serverTimezone, $this->customVisitor);
     }
@@ -127,7 +127,7 @@ final readonly class ClickHouseQueryBuilder
         $parts = [];
         $params = [];
 
-        if ($this->mandatoryFilter !== null) {
+        if ($this->mandatoryFilter instanceof FilterInterface) {
             [$sql, $sub] = $this->visitor->dispatch($this->mandatoryFilter, $index, true);
             if ($sql !== '') {
                 $parts[] = $sql;
@@ -135,7 +135,7 @@ final readonly class ClickHouseQueryBuilder
             }
         }
 
-        if ($filter !== null) {
+        if ($filter instanceof FilterInterface) {
             [$sql, $sub] = $this->visitor->dispatch($filter, $index, false);
             if ($sql !== '') {
                 $parts[] = $sql;

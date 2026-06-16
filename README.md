@@ -25,6 +25,7 @@ $sql = $qb->buildSelect(table: 'events', where: $where->sql, limit: 20);
 - **`ClickHousePartitionManager`** — list / drop / detach / attach / move / freeze partitions.
 - **`ClickHouseMutationBuilder`** — async `ALTER … UPDATE/DELETE` with mutation tracking.
 - **`ClickHouseMigrationRunner`** — idempotent, checksum-verified `*.sql` migrations.
+- **`ClickHouseMigrationGenerator`** — creates new migration files with auto-incremented numeric prefixes.
 - **`ClickHouseDataType`** — type-name constants and factories for parametric/nested types.
 
 Built on top of [`simpod/clickhouse-client`](https://github.com/simPod/clickhouse-client). The query/reader pieces integrate with the `yiisoft/data` reader abstractions, so they slot naturally into Yii3 admin grids and paginated APIs, but nothing here requires the full framework.
@@ -49,6 +50,8 @@ Built on top of [`simpod/clickhouse-client`](https://github.com/simPod/clickhous
   - [ClickHouseMutationBuilder](#clickhousemutationbuilder)
   - [ClickHouseDataType](#clickhousedatatype)
   - [ClickHouseMigrationRunner](#clickhousemigrationrunner)
+  - [ClickHouseMigrationGenerator & status()](#clickhousemigrationgenerator--status)
+  - [Console commands](#console-commands)
   - [Interfaces](#interfaces)
   - [Timezone handling](#timezone-handling)
 - [Dependency injection](#dependency-injection)
@@ -432,6 +435,81 @@ Name files so lexicographic order equals execution order, e.g. `001_create_event
 
 > **Concurrency & partial failure.** ClickHouse has no transactions and the runner uses no distributed lock: the applied-list is read, then each file is executed and recorded separately. Two runners started at once may both run the same pending file, and if a file's DDL succeeds but the `_migrations` insert does not, the next run repeats it. Run migrations from a single deploy step, prefer idempotent DDL (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`), and wrap `run()` in an external lock if you need stronger guarantees.
 
+### `ClickHouseMigrationGenerator` & `status()`
+
+Two helpers that round out the migration workflow:
+
+- **`ClickHouseMigrationGenerator`** creates a new migration file with the next sequential numeric prefix. It is a plain filesystem helper — no ClickHouse client required.
+- **`ClickHouseMigrationRunner::status()`** reports the state of every migration file relative to the `_migrations` table.
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationGenerator;
+
+$generator = new ClickHouseMigrationGenerator(__DIR__ . '/migrations');
+
+$path = $generator->generate('add events index');
+// Creates migrations/003_add_events_index.sql (003 = highest existing prefix + 1)
+// with a header comment; write your DDL below the header.
+```
+
+The description is sanitised to a slug (lowercase, non-alphanumeric runs collapse to `_`, trimmed). Prefix width matches the widest existing one and grows past `999` (`999` → `1000`).
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationState;
+
+$statuses = $runner->status(); // list<ClickHouseMigrationStatus>, sorted by name
+
+foreach ($statuses as $status) {
+    // $status->name       — '001_create_events.sql'
+    // $status->state      — ClickHouseMigrationState::Applied
+    // $status->checksum   — sha1 of the current file (null for Missing)
+    // $status->appliedAt  — stored applied_at string (null for Pending)
+}
+```
+
+| State | Meaning |
+|---|---|
+| `Applied` | File exists, checksum matches the stored one. |
+| `Pending` | File exists, not recorded in `_migrations` yet. |
+| `Missing` | Recorded in `_migrations`, but the source file was removed. |
+| `Diverged` | File exists and was recorded, but the checksum no longer matches (or conflicting checksums were recorded). |
+
+Unlike `run()`, `status()` never throws on divergence — it surfaces the anomaly through the `Diverged` state.
+
+### Console commands
+
+Three Symfony Console commands wrap the migration API for CLI use. They live in `Rasuvaeff\ClickHouseToolkit\Command` and require `symfony/console` (^7.2, listed in `require`).
+
+| Command | Wraps | Description |
+|---|---|---|
+| `clickhouse:migrations:generate <description>` | `ClickHouseMigrationGenerator::generate()` | Creates `NNN_description.sql` with the next prefix. Exit `2` on invalid description, `1` on filesystem failure. |
+| `clickhouse:migrations:status` | `ClickHouseMigrationRunner::status()` | Prints a table of migrations + state counts. Exit `1` when any `Missing` or `Diverged` exists. |
+| `clickhouse:migrations:migrate` | `ClickHouseMigrationRunner::run()` | Applies pending migrations, one line per file. Idempotent. |
+
+Register them in your Symfony Console `Application`:
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationGenerator;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
+use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsGenerateCommand;
+use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsRunCommand;
+use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsStatusCommand;
+use Symfony\Component\Console\Application;
+
+$application = new Application('clickhouse-migrations');
+$application->addCommands([
+    new ClickHouseMigrationsGenerateCommand(new ClickHouseMigrationGenerator($migrationsPath)),
+    new ClickHouseMigrationsStatusCommand($runner),
+    new ClickHouseMigrationsRunCommand($runner),
+]);
+$application->run();
+```
+
+A runnable wiring example is in [`examples/console-application.php`](examples/console-application.php).
+
+To wire the API directly into Yii3, Symfony or Laravel (container binding + your
+own console command), see [`examples/framework-integrations.md`](examples/framework-integrations.md).
+
 ### `ClickHouseDataType`
 
 Type-name constants and factories so type definitions are self-documenting and
@@ -528,8 +606,8 @@ See [`examples/di-container.php`](examples/di-container.php) for a runnable plai
 ## What is intentionally not included
 
 - Concrete readers/writers for specific tables (row shapes are app-specific — use `ClickHouseDataReader` with a mapper, or implement `ClickHouseReaderInterface`).
-- A migration generator or rollback/down migrations.
-- Connection pooling or retries.
+- Migration rollback / down-migrations. ClickHouse DDL (`ALTER ... DELETE`) is often irreversible, so rollback creates a false sense of safety. Use forward-fix migrations with idempotent DDL instead.
+- Connection pooling or retries. Inject your own PSR-18 client (see [Quick start](#quick-start)) if you need timeouts, retry policies or circuit breakers.
 - Framework bootloaders/service providers (wire it in your app — see [Dependency injection](#dependency-injection)).
 
 ## Examples
@@ -542,6 +620,9 @@ Runnable, self-contained examples live in [`examples/`](examples/):
 | [`di-container.php`](examples/di-container.php) | no | Wiring the toolkit into a PSR-11 container. |
 | [`client.php`](examples/client.php) | yes | Building a client and running a query. |
 | [`run-migrations.php`](examples/run-migrations.php) + [`migrations/`](examples/migrations) | yes | Applying `*.sql` migrations idempotently. |
+| [`generate-migration.php`](examples/generate-migration.php) | no | Creating a new migration file with `ClickHouseMigrationGenerator`. |
+| [`migrations-status.php`](examples/migrations-status.php) | yes | Reporting migration state via `ClickHouseMigrationRunner::status()`. |
+| [`console-application.php`](examples/console-application.php) | yes | Wiring the three Symfony Console commands into an `Application`. |
 | [`batch-writer.php`](examples/batch-writer.php) | yes | Batched inserts via `ClickHouseBatchWriter`. |
 | [`reader.php`](examples/reader.php) + [`EventReader.php`](examples/EventReader.php) | yes | A `ClickHouseReaderInterface` implementation with row mapping. |
 | [`data-reader.php`](examples/data-reader.php) | yes | Immutable `ClickHouseDataReader` (paginator-ready). |

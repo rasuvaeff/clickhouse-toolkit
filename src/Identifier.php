@@ -20,7 +20,7 @@ final class Identifier
      */
     public static function assert(string $identifier): void
     {
-        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $identifier) !== 1) {
+        if (preg_match('/^[A-Za-z_]\w*(\.[A-Za-z_]\w*)?$/', $identifier) !== 1) {
             throw new \InvalidArgumentException(sprintf('Invalid SQL identifier: "%s".', $identifier));
         }
     }
@@ -33,7 +33,7 @@ final class Identifier
      */
     public static function assertPlain(string $identifier): void
     {
-        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $identifier) !== 1) {
+        if (preg_match('/^[A-Za-z_]\w*$/', $identifier) !== 1) {
             throw new \InvalidArgumentException(sprintf('Invalid plain SQL identifier: "%s".', $identifier));
         }
     }

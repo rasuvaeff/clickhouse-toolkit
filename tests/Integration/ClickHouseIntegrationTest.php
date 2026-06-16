@@ -38,7 +38,7 @@ final class ClickHouseIntegrationTest extends TestCase
 
     private ClickHouseClient $client;
 
-    private static function env(string $name, string $default): string
+    private function env(string $name, string $default): string
     {
         $value = getenv($name);
 
@@ -55,10 +55,10 @@ final class ClickHouseIntegrationTest extends TestCase
 
         $this->client = (new ClickHouseClientFactory(new ClickHouseConfig(
             host: $host,
-            port: (int) self::env('CLICKHOUSE_PORT', '8123'),
-            database: self::env('CLICKHOUSE_DB', 'default'),
-            username: self::env('CLICKHOUSE_USER', 'default'),
-            password: self::env('CLICKHOUSE_PASSWORD', ''),
+            port: (int) $this->env('CLICKHOUSE_PORT', '8123'),
+            database: $this->env('CLICKHOUSE_DB', 'default'),
+            username: $this->env('CLICKHOUSE_USER', 'default'),
+            password: $this->env('CLICKHOUSE_PASSWORD', ''),
         )))->create();
 
         $this->client->executeQuery('DROP TABLE IF EXISTS ' . self::TABLE);
