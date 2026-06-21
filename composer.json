@@ -49,6 +49,7 @@
         "phpunit/phpunit": "^11.5",
         "rector/rector": "^2.4",
         "roave/backward-compatibility-check": "^8.0",
+        "testo/bench": "^0.1.5",
         "vimeo/psalm": "^6.16"
     },
     "suggest": {
@@ -61,6 +62,7 @@
     },
     "autoload-dev": {
         "psr-4": {
+            "Rasuvaeff\\ClickHouseToolkit\\Benchmarks\\": "benchmarks/",
             "Rasuvaeff\\ClickHouseToolkit\\Tests\\": "tests/"
         }
     },
@@ -78,6 +80,7 @@
     },
     "scripts": {
         "bc-check": "roave-backward-compatibility-check",
+        "bench": "testo -vv",
         "build": [
             "@composer validate --strict",
             "@composer normalize --dry-run",
