@@ -75,5 +75,5 @@ console command), without the bundled Symfony Console commands.
 `CLICKHOUSE_HOST` is set:
 
 ```bash
-CLICKHOUSE_HOST=127.0.0.1 CLICKHOUSE_PASSWORD=… vendor/bin/phpunit tests/Integration
+CLICKHOUSE_HOST=127.0.0.1 CLICKHOUSE_PASSWORD=… vendor/bin/testo --suite=Integration
 ```

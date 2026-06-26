@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1 — 2026-06-26
+
+- Migrate tests from PHPUnit to Testo (testo/testo + testo/bridge-infection + testo/bench).
+
 ## 1.2.0 — 2026-06-14
 
 - Added `ClickHouseMigrationGenerator` for creating new migration files with auto-incremented numeric prefixes (`NNN_description.sql`).

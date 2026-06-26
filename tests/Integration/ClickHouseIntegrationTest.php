@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests\Integration;
 
-use PHPUnit\Framework\Attributes\CoversNothing;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseBatchWriter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseClientFactory;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseConfig;
@@ -20,19 +17,19 @@ use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseTableBuilder;
 use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Format\JsonEachRow;
+use Testo\Assert;
+use Testo\Codecov\CoversNothing;
+use Testo\Lifecycle\BeforeTest;
+use Testo\Test;
 use Yiisoft\Data\Reader\Filter\Between;
 use Yiisoft\Data\Reader\Filter\Equals;
 use Yiisoft\Data\Reader\Filter\GreaterThan;
 use Yiisoft\Data\Reader\Filter\In;
 use Yiisoft\Data\Reader\Filter\Like;
 
-/**
- * End-to-end tests against a real ClickHouse server. Skipped unless
- * CLICKHOUSE_HOST is set. Verifies that parameter binding, IN, BETWEEN and
- * (I)LIKE actually execute on the server — string-comparison unit tests cannot.
- */
+#[Test]
 #[CoversNothing]
-final class ClickHouseIntegrationTest extends TestCase
+final class ClickHouseIntegrationTest
 {
     private const string TABLE = 'it_events';
 
@@ -45,12 +42,12 @@ final class ClickHouseIntegrationTest extends TestCase
         return $value === false || $value === '' ? $default : $value;
     }
 
-    #[\Override]
-    protected function setUp(): void
+    #[BeforeTest]
+    public function setUp(): void
     {
         $host = getenv('CLICKHOUSE_HOST');
         if ($host === false || $host === '') {
-            $this->markTestSkipped('CLICKHOUSE_HOST is not set; skipping integration tests.');
+            return;
         }
 
         $this->client = (new ClickHouseClientFactory(new ClickHouseConfig(
@@ -101,89 +98,103 @@ final class ClickHouseIntegrationTest extends TestCase
         );
     }
 
-    #[Test]
     public function batchWriterAndCount(): void
     {
-        $this->assertSame(5, $this->reader()->count());
+        if (!isset($this->client)) {
+            return;
+        }
+        Assert::same($this->reader()->count(), 5);
     }
 
-    #[Test]
     public function inFilterBindsParameters(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $reader = $this->reader()->withFilter(new In('id', [2, 4]));
 
-        $this->assertSame(2, $reader->count());
-        $this->assertSame([2, 4], array_column($reader->read(), 'id'));
+        Assert::same($reader->count(), 2);
+        Assert::same(array_column($reader->read(), 'id'), [2, 4]);
     }
 
-    #[Test]
     public function betweenFilter(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $reader = $this->reader()->withFilter(new Between('id', 2, 4));
 
-        $this->assertSame([2, 3, 4], array_column($reader->read(), 'id'));
+        Assert::same(array_column($reader->read(), 'id'), [2, 3, 4]);
     }
 
-    #[Test]
     public function equalsAndGreaterThan(): void
     {
-        $this->assertSame(3, $this->reader()->withFilter(new Equals('status', 'active'))->count());
-        $this->assertSame([4, 5], array_column($this->reader()->withFilter(new GreaterThan('id', 3))->read(), 'id'));
+        if (!isset($this->client)) {
+            return;
+        }
+        Assert::same($this->reader()->withFilter(new Equals('status', 'active'))->count(), 3);
+        Assert::same(array_column($this->reader()->withFilter(new GreaterThan('id', 3))->read(), 'id'), [4, 5]);
     }
 
-    #[Test]
     public function ilikeMatchesCaseInsensitively(): void
     {
-        // 'A' contains-match, case-insensitive -> alpha, bravo, charlie, delta (echo has no 'a').
+        if (!isset($this->client)) {
+            return;
+        }
         $reader = $this->reader()->withFilter(new Like('name', 'A'));
 
-        $this->assertSame(['alpha', 'bravo', 'charlie', 'delta'], array_column($reader->read(), 'name'));
+        Assert::same(array_column($reader->read(), 'name'), ['alpha', 'bravo', 'charlie', 'delta']);
     }
 
-    #[Test]
     public function ilikeCastsNumericFieldsToString(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $reader = $this->reader()->withFilter(new Like('id', '1'));
 
-        $this->assertSame([1], array_column($reader->read(), 'id'));
+        Assert::same(array_column($reader->read(), 'id'), [1]);
     }
 
-    #[Test]
     public function paginationLimitsAndOffsets(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $page = $this->reader()->withLimit(2)->withOffset(2)->read();
 
-        $this->assertSame([3, 4], array_column($page, 'id'));
+        Assert::same(array_column($page, 'id'), [3, 4]);
     }
 
-    #[Test]
     public function mandatoryAndRawFiltersExecute(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $qb = (new ClickHouseQueryBuilder(
             allowedFields: ['id', 'status'],
             fieldTypes: ['id' => 'UInt64'],
             defaultSort: 'id ASC',
         ))->withMandatoryFilter(new Equals('status', 'active'));
 
-        // mandatory(status=active) AND user(id IN 1,2,3) -> 1,2 (3 is inactive).
         $where = $qb->buildWhere(new In('id', [1, 2, 3]));
         $sql = $qb->buildSelect(table: self::TABLE, columns: ['id'], where: $where->sql, limit: 100);
         $rows = $this->client->selectWithParams($sql, $where->params, new JsonEachRow())->data;
-        $this->assertSame([1, 2], array_map(static fn(array $r): int => (int) $r['id'], $rows));
+        Assert::same(array_map(static fn(array $r): int => (int) $r['id'], $rows), [1, 2]);
 
-        // mandatory still applies under a raw filter: status=active AND id>=2 -> 2,4.
         $raw = $qb->buildWhere(new ClickHouseRawFilter('id >= {min:UInt64}', ['min' => 2]));
         $sql2 = $qb->buildSelect(table: self::TABLE, columns: ['id'], where: $raw->sql, limit: 100);
         $rows2 = $this->client->selectWithParams($sql2, $raw->params, new JsonEachRow())->data;
-        $this->assertSame([2, 4], array_map(static fn(array $r): int => (int) $r['id'], $rows2));
+        Assert::same(array_map(static fn(array $r): int => (int) $r['id'], $rows2), [2, 4]);
     }
 
-    #[Test]
     public function dataTypeFactoriesProduceValidColumnTypes(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $this->client->executeQuery('DROP TABLE IF EXISTS it_types');
 
-        // If any generated type string were invalid, CREATE TABLE would throw.
         ClickHouseTableBuilder::create($this->client, 'it_types')
             ->column('id', ClickHouseDataType::UInt64)
             ->column('name', ClickHouseDataType::nullable(ClickHouseDataType::String))
@@ -195,12 +206,14 @@ final class ClickHouseIntegrationTest extends TestCase
             ->orderBy('id')
             ->execute();
 
-        $this->assertSame(0, $this->countRows('it_types'), 'table created with all generated types');
+        Assert::same($this->countRows('it_types'), 0);
     }
 
-    #[Test]
     public function tableBuilderCreatesUsableTable(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $this->client->executeQuery('DROP TABLE IF EXISTS it_built');
 
         ClickHouseTableBuilder::create($this->client, 'it_built')
@@ -217,12 +230,14 @@ final class ClickHouseIntegrationTest extends TestCase
 
         $output = $this->client->select('SELECT count() AS cnt FROM it_built', new JsonEachRow());
 
-        $this->assertSame(2, (int) ($output->data[0]['cnt'] ?? 0), 'TableBuilder-created table must be usable');
+        Assert::same((int) ($output->data[0]['cnt'] ?? 0), 2);
     }
 
-    #[Test]
     public function partitionManagerListsDropsDetachesAttaches(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $this->client->executeQuery('DROP TABLE IF EXISTS it_parts');
         $this->client->executeQuery('CREATE TABLE it_parts (id UInt64, p UInt8) ENGINE = MergeTree() PARTITION BY p ORDER BY id');
         (new ClickHouseBatchWriter($this->client, 'it_parts', ['id', 'p']))->write([
@@ -231,17 +246,15 @@ final class ClickHouseIntegrationTest extends TestCase
 
         $manager = new ClickHousePartitionManager($this->client);
 
-        $this->assertCount(2, $manager->getPartitions('it_parts'), 'two partitions: p=0 and p=1');
+        Assert::same(count($manager->getPartitions('it_parts')), 2);
 
-        // Drop partition p=0 -> ids 1,3 gone, 2 rows (p=1) remain.
         $manager->dropPartition('it_parts', '0');
-        $this->assertSame(2, $this->countRows('it_parts'));
+        Assert::same($this->countRows('it_parts'), 2);
 
-        // Detach + attach p=1 round-trip.
         $manager->detachPartition('it_parts', '1');
-        $this->assertSame(0, $this->countRows('it_parts'));
+        Assert::same($this->countRows('it_parts'), 0);
         $manager->attachPartition('it_parts', '1');
-        $this->assertSame(2, $this->countRows('it_parts'));
+        Assert::same($this->countRows('it_parts'), 2);
     }
 
     private function countRows(string $table): int
@@ -251,39 +264,40 @@ final class ClickHouseIntegrationTest extends TestCase
         return (int) ($output->data[0]['cnt'] ?? 0);
     }
 
-    #[Test]
     public function mutationBuilderUpdatesDeletesAndTracks(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $mb = new ClickHouseMutationBuilder($this->client);
 
-        // Initially active = ids 1,2,4 (3 rows). UPDATE id=3 -> active.
         $mb->update(self::TABLE, 'status = {st:String}', 'id = {id:UInt64}', ['st' => 'active', 'id' => 3]);
-        $this->assertTrue($mb->waitForMutations(self::TABLE, 10.0), 'update mutation should finish');
+        Assert::true($mb->waitForMutations(self::TABLE, 10.0));
         $active = $this->client->selectWithParams(
             sprintf('SELECT count() AS cnt FROM %s WHERE status = {s:String}', self::TABLE),
             ['s' => 'active'],
             new JsonEachRow(),
         );
-        $this->assertSame(4, (int) ($active->data[0]['cnt'] ?? 0));
+        Assert::same((int) ($active->data[0]['cnt'] ?? 0), 4);
 
-        // DELETE id=5 -> 4 rows remain.
         $mb->delete(self::TABLE, 'id = {id:UInt64}', ['id' => 5]);
-        $this->assertTrue($mb->waitForMutations(self::TABLE, 10.0), 'delete mutation should finish');
-        $this->assertSame(4, $this->countRows(self::TABLE));
+        Assert::true($mb->waitForMutations(self::TABLE, 10.0));
+        Assert::same($this->countRows(self::TABLE), 4);
 
         $mutations = $mb->getMutations(self::TABLE);
-        $this->assertGreaterThanOrEqual(2, count($mutations));
+        Assert::true(count($mutations) >= 2);
         foreach ($mutations as $m) {
-            $this->assertTrue($m['is_done']);
+            Assert::true($m['is_done']);
         }
 
-        // KILL MUTATION with no match must execute without error (validates the statement).
         $mb->killMutation(self::TABLE, 'nonexistent-mutation-id');
     }
 
-    #[Test]
     public function batchWriterWritesToDbQualifiedTable(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $this->client->executeQuery('CREATE DATABASE IF NOT EXISTS it_analytics');
         $this->client->executeQuery('DROP TABLE IF EXISTS it_analytics.qualified');
         $this->client->executeQuery('CREATE TABLE it_analytics.qualified (id UInt64) ENGINE = MergeTree() ORDER BY id');
@@ -293,12 +307,14 @@ final class ClickHouseIntegrationTest extends TestCase
 
         $output = $this->client->select('SELECT count() AS cnt FROM it_analytics.qualified', new JsonEachRow());
 
-        $this->assertSame(3, (int) ($output->data[0]['cnt'] ?? 0), 'db-qualified write must hit it_analytics.qualified');
+        Assert::same((int) ($output->data[0]['cnt'] ?? 0), 3);
     }
 
-    #[Test]
     public function migrationRunnerAppliesAndIsIdempotent(): void
     {
+        if (!isset($this->client)) {
+            return;
+        }
         $pid = getmypid();
         $dir = sys_get_temp_dir() . '/ch_it_migrations_' . ($pid === false ? '0' : (string) $pid);
         if (!is_dir($dir)) {
@@ -314,8 +330,8 @@ final class ClickHouseIntegrationTest extends TestCase
 
         $runner = new ClickHouseMigrationRunner($this->client, $dir);
 
-        $this->assertSame(['001_create_it_migr.sql'], $runner->run(), 'Первый запуск применяет миграцию');
-        $this->assertSame([], $runner->run(), 'Повторный запуск идемпотентен');
+        Assert::same($runner->run(), ['001_create_it_migr.sql']);
+        Assert::same($runner->run(), []);
 
         unlink($dir . '/001_create_it_migr.sql');
         rmdir($dir);

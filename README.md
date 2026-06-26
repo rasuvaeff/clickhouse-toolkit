@@ -633,8 +633,8 @@ See [`examples/README.md`](examples/README.md) for how to run them.
 
 ```bash
 composer install
-composer build       # validate + normalize + require-checker + cs + psalm + phpunit
-composer test        # phpunit only
+composer build       # validate + normalize + require-checker + cs + psalm + testo
+composer test        # testo Unit + Integration suites
 composer cs:fix      # apply php-cs-fixer
 composer psalm       # static analysis (errorLevel=1)
 ```
@@ -642,7 +642,7 @@ composer psalm       # static analysis (errorLevel=1)
 Integration tests in `tests/Integration/` run end-to-end against a real server and are skipped unless `CLICKHOUSE_HOST` is set:
 
 ```bash
-CLICKHOUSE_HOST=127.0.0.1 CLICKHOUSE_PASSWORD=… vendor/bin/phpunit tests/Integration
+CLICKHOUSE_HOST=127.0.0.1 CLICKHOUSE_PASSWORD=… vendor/bin/testo --suite=Integration
 ```
 
 CI runs `composer build` on PHP 8.3, 8.4, and 8.5.

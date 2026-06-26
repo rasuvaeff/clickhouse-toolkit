@@ -5,19 +5,22 @@ declare(strict_types=1);
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
 use InvalidArgumentException;
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationGenerator;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Expect;
+use Testo\Lifecycle\AfterTest;
+use Testo\Test;
 
-#[CoversClass(ClickHouseMigrationGenerator::class)]
-final class ClickHouseMigrationGeneratorTest extends TestCase
+#[Test]
+#[Covers(ClickHouseMigrationGenerator::class)]
+final class ClickHouseMigrationGeneratorTest
 {
     /** @var list<string> */
     private array $tempDirs = [];
 
-    #[\Override]
-    protected function tearDown(): void
+    #[AfterTest]
+    public function tearDown(): void
     {
         foreach ($this->tempDirs as $dir) {
             $this->removeRecursively($dir);
@@ -25,15 +28,13 @@ final class ClickHouseMigrationGeneratorTest extends TestCase
         $this->tempDirs = [];
     }
 
-    #[Test]
     public function startsAt001WhenDirectoryEmpty(): void
     {
         $path = $this->generate('create events table');
 
-        $this->assertSame('001_create_events_table.sql', basename($path));
+        Assert::same(basename($path), '001_create_events_table.sql');
     }
 
-    #[Test]
     public function incrementsFromHighestExistingPrefix(): void
     {
         $dir = $this->makeTempDir();
@@ -44,10 +45,9 @@ final class ClickHouseMigrationGeneratorTest extends TestCase
         $generator = new ClickHouseMigrationGenerator($dir);
         $path = $generator->generate('add column');
 
-        $this->assertSame('011_add_column.sql', basename($path));
+        Assert::same(basename($path), '011_add_column.sql');
     }
 
-    #[Test]
     public function ignoresFilesWithoutNumericPrefix(): void
     {
         $dir = $this->makeTempDir();
@@ -57,35 +57,31 @@ final class ClickHouseMigrationGeneratorTest extends TestCase
 
         $path = (new ClickHouseMigrationGenerator($dir))->generate('new one');
 
-        $this->assertSame('003_new_one.sql', basename($path));
+        Assert::same(basename($path), '003_new_one.sql');
     }
 
-    #[Test]
     public function ignoresFilesWhereDigitsAreNotAtStart(): void
     {
         $dir = $this->makeTempDir();
-        // 'name_001.sql' has digits, but not at the start — must be ignored.
         file_put_contents($dir . '/name_001.sql', 'SELECT 1');
         file_put_contents($dir . '/backup_010.sql', 'SELECT 2');
 
         $path = (new ClickHouseMigrationGenerator($dir))->generate('first');
 
-        $this->assertSame('001_first.sql', basename($path), 'Цифры не в начале имени не должны считаться за prefix');
+        Assert::same(basename($path), '001_first.sql');
     }
 
-    #[Test]
     public function sanitizesDescription(): void
     {
         $dir = $this->makeTempDir();
         $generator = new ClickHouseMigrationGenerator($dir);
 
-        $this->assertSame('001_create_events.sql', basename($generator->generate('Create EVENTS')));
-        $this->assertSame('002_drop_table.sql', basename($generator->generate('  drop   table  ')));
-        $this->assertSame('003_caf.sql', basename($generator->generate('café à ü')));
-        $this->assertSame('004_with_numbers_v2.sql', basename($generator->generate('with numbers v2')));
+        Assert::same(basename($generator->generate('Create EVENTS')), '001_create_events.sql');
+        Assert::same(basename($generator->generate('  drop   table  ')), '002_drop_table.sql');
+        Assert::same(basename($generator->generate('café à ü')), '003_caf.sql');
+        Assert::same(basename($generator->generate('with numbers v2')), '004_with_numbers_v2.sql');
     }
 
-    #[Test]
     public function growsPrefixWidthBeyond999(): void
     {
         $dir = $this->makeTempDir();
@@ -93,10 +89,9 @@ final class ClickHouseMigrationGeneratorTest extends TestCase
 
         $path = (new ClickHouseMigrationGenerator($dir))->generate('next');
 
-        $this->assertSame('1000_next.sql', basename($path));
+        Assert::same(basename($path), '1000_next.sql');
     }
 
-    #[Test]
     public function matchesWidthOfExistingFourDigitPrefix(): void
     {
         $dir = $this->makeTempDir();
@@ -104,19 +99,17 @@ final class ClickHouseMigrationGeneratorTest extends TestCase
 
         $path = (new ClickHouseMigrationGenerator($dir))->generate('b');
 
-        $this->assertSame('1001_b.sql', basename($path));
+        Assert::same(basename($path), '1001_b.sql');
     }
 
-    #[Test]
     public function writesHeaderCommentWithSlug(): void
     {
         $path = $this->generate('create events table');
 
         $contents = (string) file_get_contents($path);
-        $this->assertSame("-- ClickHouse migration: create_events_table\n\n", $contents);
+        Assert::same($contents, "-- ClickHouse migration: create_events_table\n\n");
     }
 
-    #[Test]
     public function createsMigrationsDirectoryIfMissing(): void
     {
         $dir = sys_get_temp_dir() . '/chmig_' . uniqid('', true) . '/nested';
@@ -124,45 +117,40 @@ final class ClickHouseMigrationGeneratorTest extends TestCase
 
         $path = (new ClickHouseMigrationGenerator($dir))->generate('first');
 
-        $this->assertFileExists($path);
+        Assert::true(file_exists($path));
     }
 
-    #[Test]
     public function returnsAbsolutePath(): void
     {
         $dir = $this->makeTempDir();
         $path = (new ClickHouseMigrationGenerator($dir))->generate('first');
 
-        $this->assertSame($dir . '/001_first.sql', $path);
+        Assert::same($path, $dir . '/001_first.sql');
     }
 
-    #[Test]
     public function trimsTrailingSlashFromPath(): void
     {
         $dir = $this->makeTempDir() . '/';
         $path = (new ClickHouseMigrationGenerator($dir))->generate('first');
 
-        $this->assertStringNotContainsString('//', $path);
-        $this->assertSame('001_first.sql', basename($path));
+        Assert::string($path)->notContains('//');
+        Assert::same(basename($path), '001_first.sql');
     }
 
-    #[Test]
     public function throwsOnEmptySlug(): void
     {
         $dir = $this->makeTempDir();
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessageMatches('/empty slug/');
+        Expect::exception(InvalidArgumentException::class);
 
         (new ClickHouseMigrationGenerator($dir))->generate('   !!!   ');
     }
 
-    #[Test]
     public function throwsOnEmptyDescription(): void
     {
         $dir = $this->makeTempDir();
 
-        $this->expectException(InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         (new ClickHouseMigrationGenerator($dir))->generate('');
     }

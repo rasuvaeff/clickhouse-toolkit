@@ -6,24 +6,21 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
-use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
-use Psr\Http\Message\ResponseInterface;
 use Rasuvaeff\ClickHouseToolkit\AuthenticatingHttpClient;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Test;
 
-#[CoversClass(AuthenticatingHttpClient::class)]
-final class AuthenticatingHttpClientTest extends TestCase
+#[Test]
+#[Covers(AuthenticatingHttpClient::class)]
+final class AuthenticatingHttpClientTest
 {
-    #[Test]
     public function addsConfiguredHeadersToEveryRequest(): void
     {
         $captured = null;
-        $inner = $this->createMock(ClientInterface::class);
-        $inner->method('sendRequest')->willReturnCallback(
-            static function (RequestInterface $request) use (&$captured): ResponseInterface {
+        $inner = (new FakePsrHttpClient())->withSendRequestCallback(
+            static function (RequestInterface $request) use (&$captured) {
                 $captured = $request;
 
                 return new Response(200);
@@ -38,10 +35,10 @@ final class AuthenticatingHttpClientTest extends TestCase
 
         $response = $client->sendRequest(new Request('POST', 'http://ch:8123/'));
 
-        $this->assertSame(200, $response->getStatusCode());
-        $this->assertInstanceOf(RequestInterface::class, $captured);
-        $this->assertSame('default', $captured->getHeaderLine('X-ClickHouse-User'));
-        $this->assertSame('secret', $captured->getHeaderLine('X-ClickHouse-Key'));
-        $this->assertSame('app', $captured->getHeaderLine('X-ClickHouse-Database'));
+        Assert::same($response->getStatusCode(), 200);
+        Assert::instanceOf($captured, RequestInterface::class);
+        Assert::same($captured->getHeaderLine('X-ClickHouse-User'), 'default');
+        Assert::same($captured->getHeaderLine('X-ClickHouse-Key'), 'secret');
+        Assert::same($captured->getHeaderLine('X-ClickHouse-Database'), 'app');
     }
 }

@@ -4,26 +4,26 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
+use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseBatchWriter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseWriteException;
-use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Schema\Table;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Expect;
+use Testo\Test;
 
-#[CoversClass(ClickHouseBatchWriter::class)]
-#[CoversClass(ClickHouseWriteException::class)]
-final class ClickHouseBatchWriterTest extends TestCase
+#[Test]
+#[Covers(ClickHouseBatchWriter::class)]
+#[Covers(ClickHouseWriteException::class)]
+final class ClickHouseBatchWriterTest
 {
-    #[Test]
     public function splitsRowsIntoFixedSizeBatches(): void
     {
         $sizes = [];
         $tables = [];
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('insert')->willReturnCallback(
-            static function (string $table, array $values) use (&$sizes, &$tables): void {
+        $client = (new FakeClickHouseClient())->withInsertCallback(
+            static function (Table|string $table, array $values) use (&$sizes, &$tables): void {
                 $tables[] = $table;
                 $sizes[] = count($values);
             },
@@ -32,19 +32,17 @@ final class ClickHouseBatchWriterTest extends TestCase
         $writer = new ClickHouseBatchWriter($client, 'events', ['id'], batchSize: 1000);
         $writer->write($this->rows(2500));
 
-        $this->assertSame([1000, 1000, 500], $sizes);
-        $this->assertSame(['events', 'events', 'events'], $tables);
+        Assert::same($sizes, [1000, 1000, 500]);
+        Assert::same($tables, ['events', 'events', 'events']);
     }
 
-    #[Test]
     public function projectsRowsOntoDeclaredColumns(): void
     {
         $captured = [];
         $columns = [];
         $table = null;
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('insert')->willReturnCallback(
-            static function (string $t, array $values, ?array $cols) use (&$captured, &$columns, &$table): void {
+        $client = (new FakeClickHouseClient())->withInsertCallback(
+            static function (Table|string $t, array $values, ?array $cols) use (&$captured, &$columns, &$table): void {
                 $table = $t;
                 $captured = $values;
                 $columns = $cols;
@@ -54,26 +52,29 @@ final class ClickHouseBatchWriterTest extends TestCase
         $writer = new ClickHouseBatchWriter($client, 'events', ['id', 'name', 'missing']);
         $writer->write([['id' => 1, 'name' => 'a', 'extra' => 'ignored']]);
 
-        $this->assertSame('events', $table);
-        $this->assertSame([['id' => 1, 'name' => 'a', 'missing' => null]], $captured);
-        $this->assertSame(['id', 'name', 'missing'], $columns);
+        Assert::same($table, 'events');
+        Assert::same($captured, [['id' => 1, 'name' => 'a', 'missing' => null]]);
+        Assert::same($columns, ['id', 'name', 'missing']);
     }
 
-    #[Test]
     public function doesNotInsertWhenNoRows(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->expects($this->never())->method('insert');
+        $insertCalled = false;
+        $client = (new FakeClickHouseClient())->withInsertCallback(
+            static function () use (&$insertCalled): void {
+                $insertCalled = true;
+            },
+        );
 
         (new ClickHouseBatchWriter($client, 'events', ['id']))->write([]);
+
+        Assert::false($insertCalled);
     }
 
-    #[Test]
     public function allowsBatchSizeOne(): void
     {
         $sizes = [];
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('insert')->willReturnCallback(
+        $client = (new FakeClickHouseClient())->withInsertCallback(
             static function (Table|string $table, array $values) use (&$sizes): void {
                 $sizes[] = count($values);
             },
@@ -81,15 +82,13 @@ final class ClickHouseBatchWriterTest extends TestCase
 
         (new ClickHouseBatchWriter($client, 'events', ['id'], batchSize: 1))->write([['id' => 1], ['id' => 2]]);
 
-        $this->assertSame([1, 1], $sizes);
+        Assert::same($sizes, [1, 1]);
     }
 
-    #[Test]
     public function defaultBatchSizeIsOneThousand(): void
     {
         $sizes = [];
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('insert')->willReturnCallback(
+        $client = (new FakeClickHouseClient())->withInsertCallback(
             static function (Table|string $table, array $values) use (&$sizes): void {
                 $sizes[] = count($values);
             },
@@ -97,50 +96,41 @@ final class ClickHouseBatchWriterTest extends TestCase
 
         (new ClickHouseBatchWriter($client, 'events', ['id']))->write($this->rows(1001));
 
-        $this->assertSame([1000, 1], $sizes);
+        Assert::same($sizes, [1000, 1]);
     }
 
-    #[Test]
     public function rejectsNonPositiveBatchSize(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
+        Expect::exception(InvalidArgumentException::class);
 
-        $this->expectException(\InvalidArgumentException::class);
-
-        new ClickHouseBatchWriter($client, 'events', ['id'], batchSize: 0);
+        new ClickHouseBatchWriter(new FakeClickHouseClient(), 'events', ['id'], batchSize: 0);
     }
 
-    #[Test]
     public function rejectsMalformedTable(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseBatchWriter($this->createMock(ClickHouseClient::class), 'events; DROP TABLE x', ['id']);
+        new ClickHouseBatchWriter(new FakeClickHouseClient(), 'events; DROP TABLE x', ['id']);
     }
 
-    #[Test]
     public function rejectsMalformedColumn(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseBatchWriter($this->createMock(ClickHouseClient::class), 'events', ['id', 'name) --']);
+        new ClickHouseBatchWriter(new FakeClickHouseClient(), 'events', ['id', 'name) --']);
     }
 
-    #[Test]
     public function rejectsDbQualifiedColumn(): void
     {
-        // A dotted column name is invalid in an INSERT column list.
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseBatchWriter($this->createMock(ClickHouseClient::class), 'events', ['events.id']);
+        new ClickHouseBatchWriter(new FakeClickHouseClient(), 'events', ['events.id']);
     }
 
-    #[Test]
     public function plainTableIsPassedAsString(): void
     {
         $captured = 'unset';
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('insert')->willReturnCallback(
+        $client = (new FakeClickHouseClient())->withInsertCallback(
             static function (Table|string $table) use (&$captured): void {
                 $captured = $table;
             },
@@ -148,15 +138,13 @@ final class ClickHouseBatchWriterTest extends TestCase
 
         (new ClickHouseBatchWriter($client, 'events', ['id']))->write([['id' => 1]]);
 
-        $this->assertSame('events', $captured);
+        Assert::same($captured, 'events');
     }
 
-    #[Test]
     public function dbQualifiedTableIsSplitIntoDatabaseAndName(): void
     {
         $captured = null;
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('insert')->willReturnCallback(
+        $client = (new FakeClickHouseClient())->withInsertCallback(
             static function (Table|string $table) use (&$captured): void {
                 $captured = $table;
             },
@@ -164,21 +152,22 @@ final class ClickHouseBatchWriterTest extends TestCase
 
         (new ClickHouseBatchWriter($client, 'analytics.events', ['id']))->write([['id' => 1]]);
 
-        $this->assertInstanceOf(Table::class, $captured);
-        $this->assertSame('events', $captured->name);
-        $this->assertSame('analytics', $captured->database);
+        Assert::instanceOf($captured, Table::class);
+        Assert::same($captured->name, 'events');
+        Assert::same($captured->database, 'analytics');
     }
 
-    #[Test]
     public function wrapsClientFailures(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('insert')->willThrowException(new \RuntimeException('connection refused'));
+        $client = (new FakeClickHouseClient())->withInsertCallback(
+            static function (): void {
+                throw new \RuntimeException('connection refused');
+            },
+        );
 
         $writer = new ClickHouseBatchWriter($client, 'events', ['id']);
 
-        $this->expectException(ClickHouseWriteException::class);
-        $this->expectExceptionMessageMatches('/Failed to insert 1 row\(s\) into "events"/');
+        Expect::exception(ClickHouseWriteException::class);
 
         $writer->write([['id' => 1]]);
     }

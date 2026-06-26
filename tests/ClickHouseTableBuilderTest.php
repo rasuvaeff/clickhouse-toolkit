@@ -4,21 +4,22 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
+use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseTableBuilder;
-use SimPod\ClickHouseClient\Client\ClickHouseClient;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Expect;
+use Testo\Test;
 
-#[CoversClass(ClickHouseTableBuilder::class)]
-final class ClickHouseTableBuilderTest extends TestCase
+#[Test]
+#[Covers(ClickHouseTableBuilder::class)]
+final class ClickHouseTableBuilderTest
 {
     private function builder(string $table = 'events'): ClickHouseTableBuilder
     {
-        return new ClickHouseTableBuilder($this->createMock(ClickHouseClient::class), $table);
+        return new ClickHouseTableBuilder(new FakeClickHouseClient(), $table);
     }
 
-    #[Test]
     public function buildsMinimalCreateTable(): void
     {
         $sql = $this->builder()
@@ -28,13 +29,12 @@ final class ClickHouseTableBuilderTest extends TestCase
             ->orderBy('id')
             ->build();
 
-        $this->assertSame('CREATE TABLE events (id UInt64, name String) ENGINE = MergeTree() ORDER BY id', $sql);
+        Assert::same($sql, 'CREATE TABLE events (id UInt64, name String) ENGINE = MergeTree() ORDER BY id');
     }
 
-    #[Test]
     public function buildsFullCreateTable(): void
     {
-        $sql = ClickHouseTableBuilder::create($this->createMock(ClickHouseClient::class), 'analytics.events')
+        $sql = ClickHouseTableBuilder::create(new FakeClickHouseClient(), 'analytics.events')
             ->ifNotExists()
             ->column('id', 'UInt64')
             ->column('created_at', 'DateTime')
@@ -44,54 +44,53 @@ final class ClickHouseTableBuilderTest extends TestCase
             ->orderBy('(created_at, id)')
             ->build();
 
-        $this->assertSame(
-            'CREATE TABLE IF NOT EXISTS analytics.events (id UInt64, created_at DateTime) ENGINE = ReplacingMergeTree(created_at) PARTITION BY toYYYYMM(created_at) PRIMARY KEY id ORDER BY (created_at, id)',
+        Assert::same(
             $sql,
+            'CREATE TABLE IF NOT EXISTS analytics.events (id UInt64, created_at DateTime) ENGINE = ReplacingMergeTree(created_at) PARTITION BY toYYYYMM(created_at) PRIMARY KEY id ORDER BY (created_at, id)',
         );
     }
 
-    #[Test]
     public function executeRunsBuiltSql(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->expects($this->once())
-            ->method('executeQuery')
-            ->with('CREATE TABLE events (id UInt64) ENGINE = Memory');
+        $capturedQuery = null;
+        $client = (new FakeClickHouseClient())->withExecuteQueryCallback(
+            static function (string $query) use (&$capturedQuery): void {
+                $capturedQuery = $query;
+            },
+        );
 
         (new ClickHouseTableBuilder($client, 'events'))
             ->column('id', 'UInt64')
             ->engine('Memory')
             ->execute();
+
+        Assert::same($capturedQuery, 'CREATE TABLE events (id UInt64) ENGINE = Memory');
     }
 
-    #[Test]
     public function throwsWithoutColumns(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $this->builder()->engine('Memory')->build();
     }
 
-    #[Test]
     public function throwsWithoutEngine(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $this->builder()->column('id', 'UInt64')->build();
     }
 
-    #[Test]
     public function rejectsMalformedTable(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseTableBuilder($this->createMock(ClickHouseClient::class), 'events; DROP TABLE x');
+        new ClickHouseTableBuilder(new FakeClickHouseClient(), 'events; DROP TABLE x');
     }
 
-    #[Test]
     public function rejectsDbQualifiedColumn(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $this->builder()->column('events.id', 'UInt64');
     }

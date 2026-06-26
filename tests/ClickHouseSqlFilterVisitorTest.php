@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseSqlFilterVisitor;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
+use Testo\Expect;
+use Testo\Lifecycle\BeforeTest;
+use Testo\Test;
 use Yiisoft\Data\Reader\Filter\All;
 use Yiisoft\Data\Reader\Filter\AndX;
 use Yiisoft\Data\Reader\Filter\Between;
@@ -24,13 +26,14 @@ use Yiisoft\Data\Reader\Filter\Not;
 use Yiisoft\Data\Reader\Filter\OrX;
 use Yiisoft\Data\Reader\FilterInterface;
 
-#[CoversClass(ClickHouseSqlFilterVisitor::class)]
-final class ClickHouseSqlFilterVisitorTest extends TestCase
+#[Test]
+#[Covers(ClickHouseSqlFilterVisitor::class)]
+final class ClickHouseSqlFilterVisitorTest
 {
     private ClickHouseSqlFilterVisitor $visitor;
 
-    #[\Override]
-    protected function setUp(): void
+    #[BeforeTest]
+    public function setUp(): void
     {
         $this->visitor = new ClickHouseSqlFilterVisitor(
             allowedFields: ['id', 'status', 'created_at'],
@@ -38,200 +41,177 @@ final class ClickHouseSqlFilterVisitorTest extends TestCase
         );
     }
 
-    #[Test]
     public function dispatchAllReturnsEmpty(): void
     {
         $index = 0;
-        $this->assertSame(['', []], $this->visitor->visitAll(new All(), $index, false));
+        Assert::same($this->visitor->visitAll(new All(), $index, false), ['', []]);
     }
 
-    #[Test]
     public function dispatchNoneReturnsZero(): void
     {
         $index = 0;
-        $this->assertSame(['0', []], $this->visitor->visitNone(new None(), $index, false));
+        Assert::same($this->visitor->visitNone(new None(), $index, false), ['0', []]);
     }
 
-    #[Test]
     public function dispatchEquals(): void
     {
         $index = 0;
         $result = $this->visitor->visitEquals(new Equals('status', 'active'), $index, false);
-        $this->assertSame('status = {p0:String}', $result[0]);
-        $this->assertSame(['p0' => 'active'], $result[1]);
-        $this->assertSame(1, $index);
+        Assert::same($result[0], 'status = {p0:String}');
+        Assert::same($result[1], ['p0' => 'active']);
+        Assert::same($index, 1);
     }
 
-    #[Test]
     public function dispatchEqualsDisallowedFieldReturnsEmpty(): void
     {
         $index = 0;
         $result = $this->visitor->visitEquals(new Equals('secret', 'x'), $index, false);
-        $this->assertSame('', $result[0]);
-        $this->assertSame(0, $index);
+        Assert::same($result[0], '');
+        Assert::same($index, 0);
     }
 
-    #[Test]
     public function dispatchGreaterThanIncrementsIndex(): void
     {
         $index = 5;
         $result = $this->visitor->visitGreaterThan(new GreaterThan('id', 10), $index, false);
-        $this->assertSame('id > {p5:UInt64}', $result[0]);
-        $this->assertSame(6, $index);
+        Assert::same($result[0], 'id > {p5:UInt64}');
+        Assert::same($index, 6);
     }
 
-    #[Test]
     public function dispatchInWithMultipleValues(): void
     {
         $index = 0;
         $result = $this->visitor->visitIn(new In('id', [1, 2, 3]), $index, false);
-        $this->assertSame('id IN ({p0:UInt64}, {p1:UInt64}, {p2:UInt64})', $result[0]);
-        $this->assertSame(['p0' => 1, 'p1' => 2, 'p2' => 3], $result[1]);
-        $this->assertSame(3, $index);
+        Assert::same($result[0], 'id IN ({p0:UInt64}, {p1:UInt64}, {p2:UInt64})');
+        Assert::same($result[1], ['p0' => 1, 'p1' => 2, 'p2' => 3]);
+        Assert::same($index, 3);
     }
 
-    #[Test]
     public function dispatchInWithEmptyValuesMatchesNothing(): void
     {
         $index = 0;
         $result = $this->visitor->visitIn(new In('id', []), $index, false);
-        $this->assertSame('0', $result[0]);
-        $this->assertSame(0, $index);
+        Assert::same($result[0], '0');
+        Assert::same($index, 0);
     }
 
-    #[Test]
     public function dispatchBetween(): void
     {
         $index = 0;
         $result = $this->visitor->visitBetween(new Between('id', 10, 20), $index, false);
-        $this->assertSame('id BETWEEN {p0:UInt64} AND {p1:UInt64}', $result[0]);
-        $this->assertSame(['p0' => 10, 'p1' => 20], $result[1]);
-        $this->assertSame(2, $index);
+        Assert::same($result[0], 'id BETWEEN {p0:UInt64} AND {p1:UInt64}');
+        Assert::same($result[1], ['p0' => 10, 'p1' => 20]);
+        Assert::same($index, 2);
     }
 
-    #[Test]
     public function dispatchEqualsNull(): void
     {
         $index = 0;
         $result = $this->visitor->visitEqualsNull(new EqualsNull('status'), $index, false);
-        $this->assertSame('status IS NULL', $result[0]);
-        $this->assertSame([], $result[1]);
+        Assert::same($result[0], 'status IS NULL');
+        Assert::same($result[1], []);
     }
 
-    #[Test]
     public function dispatchLikeContains(): void
     {
         $index = 0;
         $result = $this->visitor->visitLike(new Like('status', 'act'), $index, false);
-        $this->assertSame('status ILIKE {p0:String}', $result[0]);
-        $this->assertSame(['p0' => '%act%'], $result[1]);
+        Assert::same($result[0], 'status ILIKE {p0:String}');
+        Assert::same($result[1], ['p0' => '%act%']);
     }
 
-    #[Test]
     public function dispatchLikeCastsNonStringFieldToString(): void
     {
         $index = 0;
         $result = $this->visitor->visitLike(new Like('id', '12'), $index, false);
-        $this->assertSame('toString(id) ILIKE {p0:String}', $result[0]);
-        $this->assertSame(['p0' => '%12%'], $result[1]);
+        Assert::same($result[0], 'toString(id) ILIKE {p0:String}');
+        Assert::same($result[1], ['p0' => '%12%']);
     }
 
-    #[Test]
     public function dispatchLikeWithEmptyValueIsDropped(): void
     {
         $index = 0;
         $result = $this->visitor->visitLike(new Like('status', ''), $index, false);
-        $this->assertSame(['', []], $result);
-        $this->assertSame(0, $index);
+        Assert::same($result, ['', []]);
+        Assert::same($index, 0);
     }
 
-    #[Test]
     public function dispatchLikeStartsWithCaseSensitive(): void
     {
         $index = 0;
         $result = $this->visitor->visitLike(new Like('status', 'act', caseSensitive: true, mode: LikeMode::StartsWith), $index, false);
-        $this->assertSame('status LIKE {p0:String}', $result[0]);
-        $this->assertSame(['p0' => 'act%'], $result[1]);
+        Assert::same($result[0], 'status LIKE {p0:String}');
+        Assert::same($result[1], ['p0' => 'act%']);
     }
 
-    #[Test]
     public function dispatchNotWrapsInner(): void
     {
         $index = 0;
         $result = $this->visitor->visitNot(new Not(new Equals('status', 'active')), $index, false);
-        $this->assertSame('NOT (status = {p0:String})', $result[0]);
-        $this->assertSame(['p0' => 'active'], $result[1]);
+        Assert::same($result[0], 'NOT (status = {p0:String})');
+        Assert::same($result[1], ['p0' => 'active']);
     }
 
-    #[Test]
     public function dispatchNotWithDroppedInnerIsEmpty(): void
     {
         $index = 0;
         $result = $this->visitor->visitNot(new Not(new Equals('secret', 'x')), $index, false);
-        $this->assertSame('', $result[0]);
+        Assert::same($result[0], '');
     }
 
-    #[Test]
     public function dispatchAndX(): void
     {
         $index = 0;
         $result = $this->visitor->visitAndX(new AndX(new Equals('status', 'a'), new GreaterThan('id', 5)), $index, false);
-        $this->assertSame('(status = {p0:String} AND id > {p1:UInt64})', $result[0]);
-        $this->assertSame(['p0' => 'a', 'p1' => 5], $result[1]);
-        $this->assertSame(2, $index);
+        Assert::same($result[0], '(status = {p0:String} AND id > {p1:UInt64})');
+        Assert::same($result[1], ['p0' => 'a', 'p1' => 5]);
+        Assert::same($index, 2);
     }
 
-    #[Test]
     public function dispatchOrX(): void
     {
         $index = 0;
         $result = $this->visitor->visitOrX(new OrX(new Equals('status', 'a'), new Equals('status', 'b')), $index, false);
-        $this->assertSame('(status = {p0:String} OR status = {p1:String})', $result[0]);
+        Assert::same($result[0], '(status = {p0:String} OR status = {p1:String})');
     }
 
-    #[Test]
     public function dispatchSkipsDisallowedSubFilters(): void
     {
         $index = 0;
         $result = $this->visitor->visitAndX(new AndX(new Equals('secret', 'x'), new Equals('status', 'a')), $index, false);
-        $this->assertSame('(status = {p0:String})', $result[0]);
+        Assert::same($result[0], '(status = {p0:String})');
     }
 
-    #[Test]
     public function trustedBypassesAllowList(): void
     {
         $index = 0;
         $result = $this->visitor->visitEquals(new Equals('tenant_id', 5), $index, true);
-        $this->assertSame('tenant_id = {p0:String}', $result[0]);
+        Assert::same($result[0], 'tenant_id = {p0:String}');
     }
 
-    #[Test]
     public function trustedRejectsMalformedIdentifier(): void
     {
         $index = 0;
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(\InvalidArgumentException::class);
         $this->visitor->visitEquals(new Equals('bad; DROP', 1), $index, true);
     }
 
-    #[Test]
     public function dispatchUnknownFilterReturnsEmpty(): void
     {
         $index = 0;
         $result = $this->visitor->dispatch(new class implements \Yiisoft\Data\Reader\FilterInterface {}, $index, false);
-        $this->assertSame(['', []], $result);
+        Assert::same($result, ['', []]);
     }
 
-    #[Test]
     public function dateTimeNormalizedWithoutTimezone(): void
     {
         $visitor = new ClickHouseSqlFilterVisitor(['dt'], ['dt' => 'DateTime']);
         $index = 0;
         $dt = new \DateTimeImmutable('2024-06-15 12:00:00', new \DateTimeZone('Europe/Moscow'));
         $result = $visitor->visitEquals(new Equals('dt', $dt), $index, false);
-        $this->assertSame(['p0' => '2024-06-15 12:00:00'], $result[1]);
+        Assert::same($result[1], ['p0' => '2024-06-15 12:00:00']);
     }
 
-    #[Test]
     public function dateTimeNormalizedWithServerTimezone(): void
     {
         $visitor = new ClickHouseSqlFilterVisitor(
@@ -242,10 +222,9 @@ final class ClickHouseSqlFilterVisitorTest extends TestCase
         $index = 0;
         $dt = new \DateTimeImmutable('2024-06-15 15:00:00', new \DateTimeZone('Europe/Moscow'));
         $result = $visitor->visitEquals(new Equals('dt', $dt), $index, false);
-        $this->assertSame(['p0' => '2024-06-15 12:00:00'], $result[1]);
+        Assert::same($result[1], ['p0' => '2024-06-15 12:00:00']);
     }
 
-    #[Test]
     public function dateTimeMutableConvertedToServerTimezone(): void
     {
         $visitor = new ClickHouseSqlFilterVisitor(
@@ -256,42 +235,37 @@ final class ClickHouseSqlFilterVisitorTest extends TestCase
         $index = 0;
         $dt = new \DateTime('2024-06-15 15:00:00', new \DateTimeZone('Europe/Moscow'));
         $result = $visitor->visitEquals(new Equals('dt', $dt), $index, false);
-        $this->assertSame(['p0' => '2024-06-15 12:00:00'], $result[1]);
+        Assert::same($result[1], ['p0' => '2024-06-15 12:00:00']);
     }
 
-    #[Test]
     public function boolIsNormalizedToInt(): void
     {
         $index = 0;
         $result = $this->visitor->visitEquals(new Equals('id', true), $index, false);
-        $this->assertSame(['p0' => 1], $result[1]);
+        Assert::same($result[1], ['p0' => 1]);
     }
 
-    #[Test]
     public function compositeWithAllSubsDroppedIsEmpty(): void
     {
         $index = 0;
         $result = $this->visitor->visitAndX(new AndX(new Equals('secret', 'x')), $index, false);
-        $this->assertSame(['', []], $result);
+        Assert::same($result, ['', []]);
     }
 
-    #[Test]
     public function likeEscapesWildcards(): void
     {
         $index = 0;
         $result = $this->visitor->visitLike(new Like('status', "50%_off'x"), $index, false);
-        $this->assertSame(['p0' => "%50\\%\\_off'x%"], $result[1]);
+        Assert::same($result[1], ['p0' => "%50\\%\\_off'x%"]);
     }
 
-    #[Test]
     public function lessThanOrEqualUsesFieldType(): void
     {
         $index = 0;
         $result = $this->visitor->visitLessThanOrEqual(new LessThanOrEqual('created_at', '2024-01-01'), $index, false);
-        $this->assertSame('created_at <= {p0:DateTime}', $result[0]);
+        Assert::same($result[0], 'created_at <= {p0:DateTime}');
     }
 
-    #[Test]
     public function likeStringifiesStringableValueAndAdvancesIndex(): void
     {
         $index = 0;
@@ -303,11 +277,10 @@ final class ClickHouseSqlFilterVisitorTest extends TestCase
         };
         $result = $this->visitor->visitLike(new Like('status', $value), $index, false);
 
-        $this->assertSame(['p0' => '%abc%'], $result[1]);
-        $this->assertSame(1, $index, 'Индекс параметра должен увеличиваться');
+        Assert::same($result[1], ['p0' => '%abc%']);
+        Assert::same($index, 1);
     }
 
-    #[Test]
     public function equalsStringifiesStringableValue(): void
     {
         $index = 0;
@@ -319,10 +292,9 @@ final class ClickHouseSqlFilterVisitorTest extends TestCase
         };
         $result = $this->visitor->visitEquals(new Equals('status', $value), $index, false);
 
-        $this->assertSame(['p0' => 'abc'], $result[1]);
+        Assert::same($result[1], ['p0' => 'abc']);
     }
 
-    #[Test]
     public function mutableDateTimeIsNotMutatedByNormalization(): void
     {
         $visitor = new ClickHouseSqlFilterVisitor(['dt'], ['dt' => 'DateTime'], new \DateTimeZone('UTC'));
@@ -331,67 +303,59 @@ final class ClickHouseSqlFilterVisitorTest extends TestCase
 
         $visitor->visitEquals(new Equals('dt', $dt), $index, false);
 
-        $this->assertSame('Europe/Moscow', $dt->getTimezone()->getName(), 'Исходный DateTime не должен мутировать');
+        Assert::same($dt->getTimezone()->getName(), 'Europe/Moscow');
     }
 
-    #[Test]
     public function likeTreatsNullableStringTypeAsStringWithoutCast(): void
     {
         $visitor = new ClickHouseSqlFilterVisitor(['x'], ['x' => 'Nullable(String)']);
         $index = 0;
         $result = $visitor->visitLike(new Like('x', 'v'), $index, false);
 
-        $this->assertSame('x ILIKE {p0:String}', $result[0]);
+        Assert::same($result[0], 'x ILIKE {p0:String}');
     }
 
-    #[Test]
     public function likeNormalizesSpacesInTypeToken(): void
     {
         $visitor = new ClickHouseSqlFilterVisitor(['x'], ['x' => 'Nullable( String )']);
         $index = 0;
         $result = $visitor->visitLike(new Like('x', 'v'), $index, false);
 
-        $this->assertSame('x ILIKE {p0:String}', $result[0]);
+        Assert::same($result[0], 'x ILIKE {p0:String}');
     }
 
-    #[Test]
     public function likeTypeMustStartWithNullableToUnwrap(): void
     {
-        // Leading junk => regex must NOT match (anchored at ^), so the field is not treated as string.
         $visitor = new ClickHouseSqlFilterVisitor(['x'], ['x' => 'xNullable(String)']);
         $index = 0;
         $result = $visitor->visitLike(new Like('x', 'v'), $index, false);
 
-        $this->assertSame('toString(x) ILIKE {p0:String}', $result[0]);
+        Assert::same($result[0], 'toString(x) ILIKE {p0:String}');
     }
 
-    #[Test]
     public function likeTypeMustEndWithClosingParenToUnwrap(): void
     {
-        // Trailing junk => regex must NOT match (anchored at $), so the field is not treated as string.
         $visitor = new ClickHouseSqlFilterVisitor(['x'], ['x' => 'Nullable(String)x']);
         $index = 0;
         $result = $visitor->visitLike(new Like('x', 'v'), $index, false);
 
-        $this->assertSame('toString(x) ILIKE {p0:String}', $result[0]);
+        Assert::same($result[0], 'toString(x) ILIKE {p0:String}');
     }
 
-    #[Test]
     public function dispatchRoutesEqualsToVisitEquals(): void
     {
         $index = 0;
         $result = $this->visitor->dispatch(new Equals('status', 'active'), $index, false);
 
-        $this->assertSame('status = {p0:String}', $result[0]);
+        Assert::same($result[0], 'status = {p0:String}');
     }
 
-    #[Test]
     #[DataProvider('disallowedFieldFilterProvider')]
     public function disallowedFieldReturnsEmptyPair(FilterInterface $filter): void
     {
         $index = 0;
 
-        $this->assertSame(['', []], $this->visitor->dispatch($filter, $index, false));
+        Assert::same($this->visitor->dispatch($filter, $index, false), ['', []]);
     }
 
     /**

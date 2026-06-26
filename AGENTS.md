@@ -33,7 +33,7 @@ No PHP/Composer on the host — everything runs in Docker via the `composer:2`
 image (which bundles PHP). Run from the package root.
 
 ```bash
-# Full gate: validate + normalize + require-checker + cs + psalm + phpunit
+# Full gate: validate + normalize + require-checker + cs + psalm + testo
 docker run --rm -v "$PWD":/app -w /app composer:2 composer build
 
 # Auto-fix code style first if cs fails
@@ -43,10 +43,7 @@ docker run --rm -v "$PWD":/app -w /app composer:2 composer cs:fix
 docker run --rm -v "$PWD":/app -w /app composer:2 composer psalm
 docker run --rm -v "$PWD":/app -w /app composer:2 composer test
 
-# Coverage + mutation testing (requires PCOV/Xdebug — not available in composer:2 image;
-# run in a PHP image with pcov installed, or locally with Xdebug):
-#   php:8.4-cli + pcov: apt-get update && apt-get install -y autoconf build-essential &&
-#     pecl install pcov && docker-php-ext-enable pcov
+# Coverage + mutation testing (with Testo + Infection):
 docker run --rm -v "$PWD":/app -w /app composer:2 composer test:coverage
 docker run --rm -v "$PWD":/app -w /app composer:2 composer mutation
 
@@ -76,7 +73,7 @@ for i in $(seq 1 40); do curl -fs -H 'X-ClickHouse-User: default' \
 # run the suite (host network so the container reaches 127.0.0.1:8123)
 docker run --rm --network host -v "$PWD":/app -w /app \
   -e CLICKHOUSE_HOST=127.0.0.1 -e CLICKHOUSE_PASSWORD=ch_test \
-  composer:2 vendor/bin/phpunit tests/Integration
+  composer:2 vendor/bin/testo --suite=Integration
 docker rm -f ch-test
 ```
 

@@ -44,12 +44,13 @@
         "ergebnis/composer-normalize": "^2.51",
         "friendsofphp/php-cs-fixer": "^3.95",
         "guzzlehttp/guzzle": "^7.9",
-        "infection/infection": "^0.29",
+        "infection/infection": "^0.33",
         "maglnet/composer-require-checker": "^4.17",
-        "phpunit/phpunit": "^11.5",
         "rector/rector": "^2.4",
         "roave/backward-compatibility-check": "^8.0",
         "testo/bench": "^0.1.5",
+        "testo/bridge-infection": "^0.1.6",
+        "testo/testo": "^0.10.25",
         "vimeo/psalm": "^6.16"
     },
     "suggest": {
@@ -101,8 +102,8 @@
             "@bc-check"
         ],
         "require-checker": "composer-require-checker check composer.json",
-        "test": "phpunit",
-        "test:coverage": "phpunit --coverage-text --coverage-clover=build/coverage.xml",
-        "test:coverage:ci": "phpunit --coverage-clover=build/coverage.xml"
+        "test": "testo --suite=Unit",
+        "test:coverage": "testo --suite=Unit --coverage --coverage-clover=build/coverage.xml",
+        "test:coverage:ci": "testo --suite=Unit --coverage-clover=build/coverage.xml"
     }
 }
