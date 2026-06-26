@@ -17,9 +17,7 @@
     //  - `match (true)` subject and wall-clock polling (`microtime`/`usleep`)
     //    are untestable by design (PCOV quirk / timing flakiness).
     "minMsi": 95,
-    "phpUnit": {
-        "configDir": "."
-    },
+    "testFramework": "testo",
     "mutators": {
         "@default": true
     }
