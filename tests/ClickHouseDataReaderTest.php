@@ -4,19 +4,21 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
+use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseDataReader;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
-use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Expect;
+use Testo\Test;
 use Yiisoft\Data\Reader\Filter\Equals;
 use Yiisoft\Data\Reader\Sort;
 
-#[CoversClass(ClickHouseDataReader::class)]
-final class ClickHouseDataReaderTest extends TestCase
+#[Test]
+#[Covers(ClickHouseDataReader::class)]
+final class ClickHouseDataReaderTest
 {
     private function queryBuilder(): ClickHouseQueryBuilder
     {
@@ -32,24 +34,24 @@ final class ClickHouseDataReaderTest extends TestCase
      */
     private function reader(array $returnRows, ?string &$capturedSql = null, ?array &$capturedParams = null): ClickHouseDataReader
     {
-        $client = $this->createMock(ClickHouseClient::class);
         $output = $this->makeOutput($returnRows);
 
-        $client->method('select')->willReturnCallback(
-            static function (string $sql) use ($output, &$capturedSql): Output {
-                $capturedSql = $sql;
+        $client = (new FakeClickHouseClient())
+            ->withSelectCallback(
+                static function (string $sql) use ($output, &$capturedSql): Output {
+                    $capturedSql = $sql;
 
-                return $output;
-            },
-        );
-        $client->method('selectWithParams')->willReturnCallback(
-            static function (string $sql, array $params) use ($output, &$capturedSql, &$capturedParams): Output {
-                $capturedSql = $sql;
-                $capturedParams = $params;
+                    return $output;
+                },
+            )
+            ->withSelectWithParamsCallback(
+                static function (string $sql, array $params) use ($output, &$capturedSql, &$capturedParams): Output {
+                    $capturedSql = $sql;
+                    $capturedParams = $params;
 
-                return $output;
-            },
-        );
+                    return $output;
+                },
+            );
 
         return new ClickHouseDataReader(
             client: $client,
@@ -70,7 +72,6 @@ final class ClickHouseDataReaderTest extends TestCase
         return new JsonEachRowOutput(implode("\n", $lines));
     }
 
-    #[Test]
     public function readReturnsMappedRowsWithPagination(): void
     {
         $sql = null;
@@ -83,12 +84,11 @@ final class ClickHouseDataReaderTest extends TestCase
 
         $rows = $reader->read();
 
-        $this->assertSame([['id' => 1, 'status' => 'active'], ['id' => 2, 'status' => 'active']], $rows);
-        $this->assertSame('SELECT id, status FROM events WHERE status = {p0:String} ORDER BY id ASC LIMIT 10 OFFSET 20', $sql);
-        $this->assertSame(['p0' => 'active'], $params);
+        Assert::same($rows, [['id' => 1, 'status' => 'active'], ['id' => 2, 'status' => 'active']]);
+        Assert::same($sql, 'SELECT id, status FROM events WHERE status = {p0:String} ORDER BY id ASC LIMIT 10 OFFSET 20');
+        Assert::same($params, ['p0' => 'active']);
     }
 
-    #[Test]
     public function readWithoutLimitOmitsLimitClause(): void
     {
         $sql = null;
@@ -96,118 +96,105 @@ final class ClickHouseDataReaderTest extends TestCase
 
         $reader->read();
 
-        $this->assertIsString($sql);
-        $this->assertStringContainsString('SELECT id, status FROM events ORDER BY id DESC', $sql);
-        $this->assertStringNotContainsString('LIMIT', $sql, 'Без явного лимита LIMIT не добавляется');
+        Assert::true(is_string($sql));
+        Assert::string($sql)->contains('SELECT id, status FROM events ORDER BY id DESC');
+        Assert::string($sql)->notContains('LIMIT');
     }
 
-    #[Test]
     public function readOneReturnsFirstRow(): void
     {
         $sql = null;
         $reader = $this->reader([['id' => 7, 'status' => 'x']], $sql);
 
-        $this->assertSame(['id' => 7, 'status' => 'x'], $reader->readOne());
-        $this->assertIsString($sql);
-        $this->assertStringContainsString('LIMIT 1', $sql);
+        Assert::same($reader->readOne(), ['id' => 7, 'status' => 'x']);
+        Assert::true(is_string($sql));
+        Assert::string($sql)->contains('LIMIT 1');
     }
 
-    #[Test]
     public function readOneReturnsNullWhenEmpty(): void
     {
-        $this->assertNull($this->reader([])->readOne());
+        Assert::null($this->reader([])->readOne());
     }
 
-    #[Test]
     public function countReturnsInteger(): void
     {
         $sql = null;
         $reader = $this->reader([['cnt' => 42]], $sql);
 
-        $this->assertSame(42, $reader->count());
-        $this->assertIsString($sql);
-        $this->assertStringContainsString('SELECT count() AS cnt FROM events', $sql);
+        Assert::same($reader->count(), 42);
+        Assert::true(is_string($sql));
+        Assert::string($sql)->contains('SELECT count() AS cnt FROM events');
     }
 
-    #[Test]
     public function withMethodsAreImmutable(): void
     {
         $reader = $this->reader([]);
         $modified = $reader->withLimit(5)->withOffset(10);
 
-        $this->assertNull($reader->getLimit(), 'Оригинал не должен меняться');
-        $this->assertSame(0, $reader->getOffset());
-        $this->assertSame(5, $modified->getLimit());
-        $this->assertSame(10, $modified->getOffset());
+        Assert::null($reader->getLimit());
+        Assert::same($reader->getOffset(), 0);
+        Assert::same($modified->getLimit(), 5);
+        Assert::same($modified->getOffset(), 10);
     }
 
-    #[Test]
     public function withFilterReturnsNewReader(): void
     {
         $reader = $this->reader([]);
 
-        $this->assertNotSame($reader, $reader->withFilter(new Equals('status', 'active')));
+        Assert::false($reader === $reader->withFilter(new Equals('status', 'active')));
     }
 
-    #[Test]
     public function withSortReturnsNewReader(): void
     {
         $reader = $this->reader([]);
 
-        $this->assertNotSame($reader, $reader->withSort(Sort::only(['id'])->withOrder(['id' => 'asc'])));
+        Assert::false($reader === $reader->withSort(Sort::only(['id'])->withOrder(['id' => 'asc'])));
     }
 
-    #[Test]
     public function getIteratorYieldsRows(): void
     {
         $reader = $this->reader([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]);
 
-        $this->assertSame(
-            [['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']],
+        Assert::same(
             iterator_to_array($reader->getIterator()),
+            [['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']],
         );
     }
 
-    #[Test]
     public function negativeLimitThrows(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $this->reader([])->withLimit(-1);
     }
 
-    #[Test]
     public function negativeOffsetThrows(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $this->reader([])->withOffset(-1);
     }
 
-    #[Test]
     public function limitZeroIsAllowed(): void
     {
-        $this->assertSame(0, $this->reader([])->withLimit(0)->getLimit());
+        Assert::same($this->reader([])->withLimit(0)->getLimit(), 0);
     }
 
-    #[Test]
     public function offsetZeroIsAllowed(): void
     {
-        $this->assertSame(0, $this->reader([])->withOffset(0)->getOffset());
+        Assert::same($this->reader([])->withOffset(0)->getOffset(), 0);
     }
 
-    #[Test]
     public function withOffsetReturnsNewReaderAndKeepsOriginal(): void
     {
         $reader = $this->reader([]);
         $modified = $reader->withOffset(7);
 
-        $this->assertNotSame($reader, $modified);
-        $this->assertSame(0, $reader->getOffset(), 'Оригинал не должен меняться');
-        $this->assertSame(7, $modified->getOffset());
+        Assert::false($reader === $modified);
+        Assert::same($reader->getOffset(), 0);
+        Assert::same($modified->getOffset(), 7);
     }
 
-    #[Test]
     public function countAppliesFilterViaSelectWithParams(): void
     {
         $sql = null;
@@ -215,36 +202,31 @@ final class ClickHouseDataReaderTest extends TestCase
         $reader = $this->reader([['cnt' => 5]], $sql, $params)
             ->withFilter(new Equals('status', 'active'));
 
-        $this->assertSame(5, $reader->count());
-        $this->assertSame(['p0' => 'active'], $params, 'count с фильтром должен идти через selectWithParams');
-        $this->assertIsString($sql);
-        $this->assertStringContainsString('WHERE status = {p0:String}', $sql);
+        Assert::same($reader->count(), 5);
+        Assert::same($params, ['p0' => 'active']);
+        Assert::true(is_string($sql));
+        Assert::string($sql)->contains('WHERE status = {p0:String}');
     }
 
-    #[Test]
     public function countReturnsZeroWhenNoRows(): void
     {
-        $this->assertSame(0, $this->reader([])->count());
+        Assert::same($this->reader([])->count(), 0);
     }
 
-    #[Test]
     public function countClampsNegativeCountToZero(): void
     {
-        $this->assertSame(0, $this->reader([['cnt' => -3]])->count());
+        Assert::same($this->reader([['cnt' => -3]])->count(), 0);
     }
 
-    #[Test]
     public function countCastsStringCountToInt(): void
     {
-        $this->assertSame(42, $this->reader([['cnt' => '42']])->count());
+        Assert::same($this->reader([['cnt' => '42']])->count(), 42);
     }
 
-    #[Test]
     public function readAppliesMapperToEachRow(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn(
-            $this->makeOutput([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]),
+        $client = (new FakeClickHouseClient())->withSelectCallback(
+            fn () => $this->makeOutput([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]),
         );
 
         $reader = new ClickHouseDataReader(
@@ -255,6 +237,6 @@ final class ClickHouseDataReaderTest extends TestCase
             columns: ['id', 'status'],
         );
 
-        $this->assertSame([['ref' => 'r1'], ['ref' => 'r2']], $reader->read());
+        Assert::same($reader->read(), [['ref' => 'r1'], ['ref' => 'r2']]);
     }
 }

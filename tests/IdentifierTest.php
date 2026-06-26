@@ -4,31 +4,31 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
+use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\Identifier;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
+use Testo\Expect;
+use Testo\Test;
 
-#[CoversClass(Identifier::class)]
-final class IdentifierTest extends TestCase
+#[Test]
+#[Covers(Identifier::class)]
+final class IdentifierTest
 {
-    #[Test]
     #[DataProvider('validIdentifiers')]
     public function assertAcceptsValid(string $identifier): void
     {
-        $this->expectNotToPerformAssertions();
-
-        Identifier::assert($identifier);
+        Identifier::assert(identifier: $identifier);
+        Assert::true(true);
     }
 
-    #[Test]
     #[DataProvider('invalidIdentifiers')]
     public function assertRejectsInvalid(string $identifier): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
-        Identifier::assert($identifier);
+        Identifier::assert(identifier: $identifier);
     }
 
     /**
@@ -62,22 +62,19 @@ final class IdentifierTest extends TestCase
         yield 'bracket' => ['events]'];
     }
 
-    #[Test]
     #[DataProvider('validPlainIdentifiers')]
     public function assertPlainAcceptsValid(string $identifier): void
     {
-        $this->expectNotToPerformAssertions();
-
-        Identifier::assertPlain($identifier);
+        Identifier::assertPlain(identifier: $identifier);
+        Assert::true(true);
     }
 
-    #[Test]
     #[DataProvider('invalidPlainIdentifiers')]
     public function assertPlainRejectsInvalid(string $identifier): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
-        Identifier::assertPlain($identifier);
+        Identifier::assertPlain(identifier: $identifier);
     }
 
     /**
@@ -103,22 +100,19 @@ final class IdentifierTest extends TestCase
         yield 'expression' => ['now()'];
     }
 
-    #[Test]
     #[DataProvider('validTypes')]
     public function assertTypeAcceptsValid(string $type): void
     {
-        $this->expectNotToPerformAssertions();
-
-        Identifier::assertType($type);
+        Identifier::assertType(type: $type);
+        Assert::true(true);
     }
 
-    #[Test]
     #[DataProvider('invalidTypes')]
     public function assertTypeRejectsInvalid(string $type): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
-        Identifier::assertType($type);
+        Identifier::assertType(type: $type);
     }
 
     /**

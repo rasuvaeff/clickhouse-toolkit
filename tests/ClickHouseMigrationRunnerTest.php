@@ -4,31 +4,33 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationState;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationStatus;
-use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Expect;
+use Testo\Lifecycle\AfterTest;
+use Testo\Test;
 
-#[CoversClass(ClickHouseMigrationRunner::class)]
-#[CoversClass(ClickHouseMigrationException::class)]
-#[CoversClass(ClickHouseMigrationState::class)]
-#[CoversClass(ClickHouseMigrationStatus::class)]
-final class ClickHouseMigrationRunnerTest extends TestCase
+#[Test]
+#[Covers(ClickHouseMigrationRunner::class)]
+#[Covers(ClickHouseMigrationException::class)]
+#[Covers(ClickHouseMigrationState::class)]
+#[Covers(ClickHouseMigrationStatus::class)]
+final class ClickHouseMigrationRunnerTest
 {
     private const string MIGRATIONS_DIR = __DIR__ . '/Fixtures/migrations';
 
     /** @var list<string> */
     private array $tempDirs = [];
 
-    #[\Override]
-    protected function tearDown(): void
+    #[AfterTest]
+    public function tearDown(): void
     {
         foreach ($this->tempDirs as $dir) {
             $this->removeRecursively($dir);
@@ -36,19 +38,21 @@ final class ClickHouseMigrationRunnerTest extends TestCase
         $this->tempDirs = [];
     }
 
-    #[Test]
     public function appliesPendingMigrationsInOrder(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        // No migrations applied yet.
-        $client->method('select')->willReturn($this->chOutput(''));
-        $client->expects($this->exactly(2))->method('insert');
+        $insertCount = 0;
+        $client = (new FakeClickHouseClient())
+            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withInsertCallback(static function () use (&$insertCount): void {
+                $insertCount++;
+            });
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
         $applied = $runner->run();
 
-        $this->assertSame(['001_create_demo.sql', '002_add_name.sql'], $applied);
+        Assert::same($applied, ['001_create_demo.sql', '002_add_name.sql']);
+        Assert::same($insertCount, 2);
     }
 
     #[Test]
