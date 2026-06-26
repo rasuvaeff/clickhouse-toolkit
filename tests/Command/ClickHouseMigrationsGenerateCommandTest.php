@@ -4,21 +4,23 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests\Command;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationGenerator;
 use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsGenerateCommand;
 use Symfony\Component\Console\Tester\CommandTester;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Lifecycle\AfterTest;
+use Testo\Test;
 
-#[CoversClass(ClickHouseMigrationsGenerateCommand::class)]
-final class ClickHouseMigrationsGenerateCommandTest extends TestCase
+#[Test]
+#[Covers(ClickHouseMigrationsGenerateCommand::class)]
+final class ClickHouseMigrationsGenerateCommandTest
 {
     /** @var list<string> */
     private array $tempDirs = [];
 
-    #[\Override]
-    protected function tearDown(): void
+    #[AfterTest]
+    public function tearDown(): void
     {
         foreach ($this->tempDirs as $dir) {
             $this->removeRecursively($dir);
@@ -26,7 +28,6 @@ final class ClickHouseMigrationsGenerateCommandTest extends TestCase
         $this->tempDirs = [];
     }
 
-    #[Test]
     public function createsMigrationAndReturnsSuccess(): void
     {
         $dir = $this->makeTempDir();
@@ -34,12 +35,11 @@ final class ClickHouseMigrationsGenerateCommandTest extends TestCase
 
         $exitCode = $tester->execute(['description' => 'create events table']);
 
-        $this->assertSame(0, $exitCode);
-        $this->assertFileExists($dir . '/001_create_events_table.sql');
-        $tester->assertCommandIsSuccessful();
+        Assert::same($exitCode, 0);
+        Assert::true(file_exists($dir . '/001_create_events_table.sql'));
+        Assert::same($tester->getStatusCode(), 0);
     }
 
-    #[Test]
     public function printsCreatedFilenameInOutput(): void
     {
         $dir = $this->makeTempDir();
@@ -48,16 +48,13 @@ final class ClickHouseMigrationsGenerateCommandTest extends TestCase
         $tester->execute(['description' => 'add column']);
 
         $output = $tester->getDisplay();
-        $this->assertStringContainsString('Created migration:', $output, 'success-сообщение должно присутствовать');
-        $this->assertStringContainsString('001_add_column.sql', $output, 'basename должен быть в success-сообщении');
-        $this->assertStringContainsString($dir . '/001_add_column.sql', $output, 'полный путь должен выводиться отдельной строкой');
+        Assert::string($output)->contains('Created migration:');
+        Assert::string($output)->contains('001_add_column.sql');
+        Assert::string($output)->contains($dir . '/001_add_column.sql');
     }
 
-    #[Test]
     public function returnsFailureWhenGeneratorThrowsRuntimeException(): void
     {
-        // $migrationsPath is a file, not a directory — mkdir inside Generator will fail
-        // and it will throw RuntimeException, which the command must catch as FAILURE.
         $file = sys_get_temp_dir() . '/chcmd_block_' . uniqid('', true);
         file_put_contents($file, 'blocker');
         $this->tempDirs[] = $file;
@@ -69,11 +66,10 @@ final class ClickHouseMigrationsGenerateCommandTest extends TestCase
 
         $exitCode = $tester->execute(['description' => 'first']);
 
-        $this->assertSame(1, $exitCode);
-        $this->assertStringContainsString('Cannot create migrations directory', $tester->getDisplay());
+        Assert::same($exitCode, 1);
+        Assert::string($tester->getDisplay())->contains('Cannot create migrations directory');
     }
 
-    #[Test]
     public function incrementsFromExistingFiles(): void
     {
         $dir = $this->makeTempDir();
@@ -82,10 +78,9 @@ final class ClickHouseMigrationsGenerateCommandTest extends TestCase
         $tester = $this->tester($dir);
         $tester->execute(['description' => 'b']);
 
-        $this->assertFileExists($dir . '/002_b.sql');
+        Assert::true(file_exists($dir . '/002_b.sql'));
     }
 
-    #[Test]
     public function returnsInvalidOnEmptySlug(): void
     {
         $dir = $this->makeTempDir();
@@ -93,8 +88,8 @@ final class ClickHouseMigrationsGenerateCommandTest extends TestCase
 
         $exitCode = $tester->execute(['description' => '   !!!   ']);
 
-        $this->assertSame(2, $exitCode);
-        $this->assertStringContainsString('empty slug', $tester->getDisplay());
+        Assert::same($exitCode, 2);
+        Assert::string($tester->getDisplay())->contains('empty slug');
     }
 
     private function tester(string $dir): CommandTester

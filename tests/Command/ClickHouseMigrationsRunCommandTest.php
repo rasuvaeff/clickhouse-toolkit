@@ -4,23 +4,24 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests\Command;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
 use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsRunCommand;
-use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow;
 use Symfony\Component\Console\Tester\CommandTester;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Lifecycle\AfterTest;
+use Testo\Test;
 
-#[CoversClass(ClickHouseMigrationsRunCommand::class)]
-final class ClickHouseMigrationsRunCommandTest extends TestCase
+#[Test]
+#[Covers(ClickHouseMigrationsRunCommand::class)]
+final class ClickHouseMigrationsRunCommandTest
 {
     /** @var list<string> */
     private array $tempDirs = [];
 
-    #[\Override]
-    protected function tearDown(): void
+    #[AfterTest]
+    public function tearDown(): void
     {
         foreach ($this->tempDirs as $dir) {
             $this->removeRecursively($dir);
@@ -28,7 +29,6 @@ final class ClickHouseMigrationsRunCommandTest extends TestCase
         $this->tempDirs = [];
     }
 
-    #[Test]
     public function appliesPendingMigrationsAndReturnsSuccess(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
@@ -36,27 +36,25 @@ final class ClickHouseMigrationsRunCommandTest extends TestCase
 
         $exitCode = $tester->execute([]);
 
-        $this->assertSame(0, $exitCode);
+        Assert::same($exitCode, 0);
         $output = $tester->getDisplay();
-        $this->assertStringContainsString('001_a.sql', $output);
-        $this->assertStringContainsString('002_b.sql', $output);
-        $this->assertStringContainsString('Applied 2 migration', $output);
+        Assert::string($output)->contains('001_a.sql');
+        Assert::string($output)->contains('002_b.sql');
+        Assert::string($output)->contains('Applied 2 migration');
     }
 
-    #[Test]
     public function returnsSuccessWhenNothingToApply(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
 
-        // Both migrations already applied (real checksums from disk).
         $rows = [];
         foreach (['001_a.sql', '002_b.sql'] as $name) {
             $checksum = sha1((string) file_get_contents($dir . '/' . $name));
             $rows[] = sprintf('{"name":"%s","current_checksum":"%s","variants":1}', $name, $checksum);
         }
 
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn(new JsonEachRow(implode("\n", $rows)));
+        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
+            ->withSelectCallback(fn () => new JsonEachRow(implode("\n", $rows)));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
@@ -64,11 +62,10 @@ final class ClickHouseMigrationsRunCommandTest extends TestCase
 
         $exitCode = $tester->execute([]);
 
-        $this->assertSame(0, $exitCode);
-        $this->assertStringContainsString('up to date', $tester->getDisplay());
+        Assert::same($exitCode, 0);
+        Assert::string($tester->getDisplay())->contains('up to date');
     }
 
-    #[Test]
     public function returnsFailureOnDivergedChecksum(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
@@ -76,8 +73,8 @@ final class ClickHouseMigrationsRunCommandTest extends TestCase
             '{"name":"001_a.sql","current_checksum":"%s","variants":1}',
             'wrong',
         );
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn(new JsonEachRow($row));
+        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
+            ->withSelectCallback(fn () => new JsonEachRow($row));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
@@ -85,14 +82,14 @@ final class ClickHouseMigrationsRunCommandTest extends TestCase
 
         $exitCode = $tester->execute([]);
 
-        $this->assertSame(1, $exitCode);
-        $this->assertStringContainsString('was changed after it was applied', $tester->getDisplay());
+        Assert::same($exitCode, 1);
+        Assert::string($tester->getDisplay())->contains('was changed after it was applied');
     }
 
     private function tester(string $dir): CommandTester
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn(new JsonEachRow(''));
+        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
+            ->withSelectCallback(fn () => new JsonEachRow(''));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());

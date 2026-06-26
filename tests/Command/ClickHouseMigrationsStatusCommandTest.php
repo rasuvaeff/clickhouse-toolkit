@@ -4,23 +4,24 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests\Command;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
 use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsStatusCommand;
-use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow;
 use Symfony\Component\Console\Tester\CommandTester;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Lifecycle\AfterTest;
+use Testo\Test;
 
-#[CoversClass(ClickHouseMigrationsStatusCommand::class)]
-final class ClickHouseMigrationsStatusCommandTest extends TestCase
+#[Test]
+#[Covers(ClickHouseMigrationsStatusCommand::class)]
+final class ClickHouseMigrationsStatusCommandTest
 {
     /** @var list<string> */
     private array $tempDirs = [];
 
-    #[\Override]
-    protected function tearDown(): void
+    #[AfterTest]
+    public function tearDown(): void
     {
         foreach ($this->tempDirs as $dir) {
             $this->removeRecursively($dir);
@@ -28,7 +29,6 @@ final class ClickHouseMigrationsStatusCommandTest extends TestCase
         $this->tempDirs = [];
     }
 
-    #[Test]
     public function returnsSuccessWhenEverythingApplied(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
@@ -36,18 +36,17 @@ final class ClickHouseMigrationsStatusCommandTest extends TestCase
 
         $exitCode = $tester->execute([]);
 
-        $this->assertSame(0, $exitCode);
+        Assert::same($exitCode, 0);
         $output = $tester->getDisplay();
-        $this->assertStringContainsString('2 applied', $output);
-        $this->assertStringContainsString('0 pending', $output);
-        $this->assertStringContainsString('001_a.sql', $output);
-        $this->assertStringContainsString('002_b.sql', $output);
-        $this->assertStringContainsString('Migration', $output, 'header колонки Migration должен присутствовать');
-        $this->assertStringContainsString('Applied at', $output, 'header колонки Applied at должен присутствовать');
-        $this->assertStringContainsString('2026-06-14 10:00:00.000000', $output, 'applied_at должен выводиться для applied миграций');
+        Assert::string($output)->contains('2 applied');
+        Assert::string($output)->contains('0 pending');
+        Assert::string($output)->contains('001_a.sql');
+        Assert::string($output)->contains('002_b.sql');
+        Assert::string($output)->contains('Migration');
+        Assert::string($output)->contains('Applied at');
+        Assert::string($output)->contains('2026-06-14 10:00:00.000000');
     }
 
-    #[Test]
     public function showsEmptyChecksumAndAppliedAtForPendingMigrations(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
@@ -56,13 +55,10 @@ final class ClickHouseMigrationsStatusCommandTest extends TestCase
         $tester->execute([]);
         $output = $tester->getDisplay();
 
-        // Pending rows show empty Checksum and Applied at — verify the table renders
-        // by checking the count summary (cells are visually empty, hard to assert directly).
-        $this->assertStringContainsString('2 pending', $output);
-        $this->assertStringNotContainsString('2026-06-14', $output, 'pending миграции не должны иметь applied_at');
+        Assert::string($output)->contains('2 pending');
+        Assert::string($output)->notContains('2026-06-14');
     }
 
-    #[Test]
     public function showsStoredChecksumForAppliedMigrations(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
@@ -72,18 +68,17 @@ final class ClickHouseMigrationsStatusCommandTest extends TestCase
         $tester->execute([]);
 
         $output = $tester->getDisplay();
-        $this->assertStringContainsString($checksum, $output, 'checksum должен быть в таблице для applied миграций');
+        Assert::string($output)->contains($checksum);
     }
 
-    #[Test]
     public function returnsFailureAndPrintsErrorWhenStatusThrows(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
 
-        $client = $this->createMock(ClickHouseClient::class);
-        // status() calls select() twice (ensureMigrationsTable is executeQuery, then fetchAppliedRecords select).
-        // Make the second call throw a RuntimeException to exercise the catch in the command.
-        $client->method('select')->willThrowException(new \RuntimeException('server unreachable'));
+        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
+            ->withSelectCallback(static function () {
+                throw new \RuntimeException('server unreachable');
+            });
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsStatusCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
@@ -91,15 +86,13 @@ final class ClickHouseMigrationsStatusCommandTest extends TestCase
 
         $exitCode = $tester->execute([]);
 
-        $this->assertSame(1, $exitCode);
-        $this->assertStringContainsString('server unreachable', $tester->getDisplay(), 'сообщение об ошибке должно выводиться через $io->error()');
+        Assert::same($exitCode, 1);
+        Assert::string($tester->getDisplay())->contains('server unreachable');
     }
 
-    #[Test]
     public function returnsFailureWhenDivergedExists(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
-        // Wrong checksum for both files -> diverged.
         $row = sprintf(
             '{"name":"001_a.sql","current_checksum":"%s","current_applied_at":"2026-06-14 10:00:00.000000","variants":1}' . "\n"
             . '{"name":"002_b.sql","current_checksum":"%s","current_applied_at":"2026-06-14 11:00:00.000000","variants":1}',
@@ -110,15 +103,13 @@ final class ClickHouseMigrationsStatusCommandTest extends TestCase
 
         $exitCode = $tester->execute([]);
 
-        $this->assertSame(1, $exitCode);
-        $this->assertStringContainsString('2 diverged', $tester->getDisplay());
+        Assert::same($exitCode, 1);
+        Assert::string($tester->getDisplay())->contains('2 diverged');
     }
 
-    #[Test]
     public function returnsFailureWhenMissingExists(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
-        // 099_z.sql is recorded but file is gone -> missing.
         $row = sprintf(
             '{"name":"099_z.sql","current_checksum":"%s","current_applied_at":"2026-06-14 12:00:00.000000","variants":1}',
             'any',
@@ -127,14 +118,13 @@ final class ClickHouseMigrationsStatusCommandTest extends TestCase
 
         $exitCode = $tester->execute([]);
 
-        $this->assertSame(1, $exitCode);
+        Assert::same($exitCode, 1);
         $output = $tester->getDisplay();
-        $this->assertStringContainsString('1 missing', $output);
-        $this->assertStringContainsString('099_z.sql', $output);
-        $this->assertStringContainsString('2 pending', $output);
+        Assert::string($output)->contains('1 missing');
+        Assert::string($output)->contains('099_z.sql');
+        Assert::string($output)->contains('2 pending');
     }
 
-    #[Test]
     public function marksPendingWhenNothingApplied(): void
     {
         $dir = $this->makeTempDirWithTwoMigrations();
@@ -142,14 +132,14 @@ final class ClickHouseMigrationsStatusCommandTest extends TestCase
 
         $exitCode = $tester->execute([]);
 
-        $this->assertSame(0, $exitCode);
-        $this->assertStringContainsString('2 pending', $tester->getDisplay());
+        Assert::same($exitCode, 0);
+        Assert::string($tester->getDisplay())->contains('2 pending');
     }
 
     private function tester(string $dir, string $chRows): CommandTester
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn(new JsonEachRow($chRows));
+        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
+            ->withSelectCallback(fn () => new JsonEachRow($chRows));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsStatusCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());

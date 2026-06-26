@@ -55,50 +55,45 @@ final class ClickHouseMigrationRunnerTest
         Assert::same($insertCount, 2);
     }
 
-    #[Test]
     public function skipsAlreadyAppliedMigrations(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput($this->appliedRows()));
-        $client->expects($this->never())->method('insert');
+        $insertCalled = false;
+        $client = (new FakeClickHouseClient())
+            ->withSelectCallback(fn () => $this->chOutput($this->appliedRows()))
+            ->withInsertCallback(static function () use (&$insertCalled): void {
+                $insertCalled = true;
+            });
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
-        $this->assertSame([], $runner->run(), 'Уже применённые миграции должны пропускаться');
+        Assert::same($runner->run(), []);
+        Assert::false($insertCalled);
     }
 
-    #[Test]
     public function throwsWhenAppliedMigrationContentChanged(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        // Stored checksum for 001 is wrong -> file was "changed" after applying.
         $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":1}', sha1('tampered'));
-        $client->method('select')->willReturn($this->chOutput($row));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput($row));
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
-        $this->expectException(ClickHouseMigrationException::class);
-        $this->expectExceptionMessageMatches('/was changed after it was applied/');
+        Expect::exception(ClickHouseMigrationException::class);
 
         $runner->run();
     }
 
-    #[Test]
     public function throwsWhenMigrationHasConflictingChecksums(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
         $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":2}', sha1('x'));
-        $client->method('select')->willReturn($this->chOutput($row));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput($row));
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
-        $this->expectException(ClickHouseMigrationException::class);
-        $this->expectExceptionMessageMatches('/conflicting checksums/');
+        Expect::exception(ClickHouseMigrationException::class);
 
         $runner->run();
     }
 
-    #[Test]
     public function ensuresMigrationsTableWithMicrosecondVersionColumn(): void
     {
         $queries = [];
@@ -106,12 +101,11 @@ final class ClickHouseMigrationRunnerTest
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
-        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS `_migrations`', $queries[0]);
-        $this->assertStringContainsString('ReplacingMergeTree(applied_at) ORDER BY name', $queries[0]);
-        $this->assertStringContainsString('DateTime64(6)', $queries[0], 'Версия должна быть микросекундной');
+        Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `_migrations`');
+        Assert::string($queries[0])->contains('ReplacingMergeTree(applied_at) ORDER BY name');
+        Assert::string($queries[0])->contains('DateTime64(6)');
     }
 
-    #[Test]
     public function executesEachMigrationSqlVerbatim(): void
     {
         $queries = [];
@@ -120,27 +114,26 @@ final class ClickHouseMigrationRunnerTest
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
         foreach (['001_create_demo.sql', '002_add_name.sql'] as $name) {
-            $this->assertContains((string) file_get_contents(self::MIGRATIONS_DIR . '/' . $name), $queries);
+            Assert::true(in_array((string) file_get_contents(self::MIGRATIONS_DIR . '/' . $name), $queries, true));
         }
     }
 
-    #[Test]
     public function recordsAppliedMigrationViaInsert(): void
     {
         $inserts = [];
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput(''));
-        $client->method('insert')->willReturnCallback(
-            static function (string $table, array $values, array $columns) use (&$inserts): void {
-                $inserts[] = ['table' => $table, 'values' => $values, 'columns' => $columns];
-            },
-        );
+        $client = (new FakeClickHouseClient())
+            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withInsertCallback(
+                static function (string $table, array $values, array $columns) use (&$inserts): void {
+                    $inserts[] = ['table' => $table, 'values' => $values, 'columns' => $columns];
+                },
+            );
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
         $checksum1 = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/001_create_demo.sql'));
         $checksum2 = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/002_add_name.sql'));
-        $this->assertSame([
+        Assert::same($inserts, [
             [
                 'table' => '_migrations',
                 'values' => [['name' => '001_create_demo.sql', 'checksum' => $checksum1]],
@@ -151,76 +144,104 @@ final class ClickHouseMigrationRunnerTest
                 'values' => [['name' => '002_add_name.sql', 'checksum' => $checksum2]],
                 'columns' => ['name', 'checksum'],
             ],
-        ], $inserts);
+        ]);
     }
 
-    #[Test]
     public function logsAppliedMigrationViaProvidedLogger(): void
     {
-        $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects($this->exactly(2))->method('info')->with(
-            'Applied ClickHouse migration {name}',
-            $this->callback(static fn(array $context): bool => isset($context['name'])),
-        );
+        $logCalls = [];
+        $logger = new class ($logCalls) implements LoggerInterface {
+            public function __construct(private array &$calls) {}
 
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput(''));
+            public function emergency(\Stringable|string $message, array $context = []): void {}
+            public function alert(\Stringable|string $message, array $context = []): void {}
+            public function critical(\Stringable|string $message, array $context = []): void {}
+            public function error(\Stringable|string $message, array $context = []): void {}
+            public function warning(\Stringable|string $message, array $context = []): void {}
+            public function notice(\Stringable|string $message, array $context = []): void {}
+            public function info(\Stringable|string $message, array $context = []): void {
+                $this->calls[] = [$message, $context];
+            }
+            public function debug(\Stringable|string $message, array $context = []): void {}
+            public function log($level, \Stringable|string $message, array $context = []): void {}
+        };
+
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput(''));
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR, $logger))->run();
+
+        Assert::same(count($logCalls), 2);
+        Assert::same($logCalls[0][0], 'Applied ClickHouse migration {name}');
+        Assert::true(isset($logCalls[0][1]['name']));
     }
 
-    #[Test]
     public function continuesPastAlreadyAppliedMigrationToApplyNext(): void
     {
         $checksum = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/001_create_demo.sql'));
         $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":1}', $checksum);
 
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput($row));
-        $client->expects($this->once())->method('insert');
+        $insertCount = 0;
+        $client = (new FakeClickHouseClient())
+            ->withSelectCallback(fn () => $this->chOutput($row))
+            ->withInsertCallback(static function () use (&$insertCount): void {
+                $insertCount++;
+            });
 
         $applied = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
-        $this->assertSame(['002_add_name.sql'], $applied, 'После пропуска применённой должна примениться следующая');
+        Assert::same($applied, ['002_add_name.sql']);
+        Assert::same($insertCount, 1);
     }
 
-    #[Test]
     public function skipsWhitespaceOnlyMigrationButAppliesNext(): void
     {
         $dir = $this->makeTempDir();
         file_put_contents($dir . '/001_blank.sql', "   \n\t");
         file_put_contents($dir . '/002_real.sql', 'CREATE TABLE x (a UInt8) ENGINE = Memory');
 
-        $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects($this->once())->method('warning')->with(
-            'Skipping empty ClickHouse migration {name}',
-            ['name' => '001_blank.sql'],
-        );
+        $warningCalls = [];
+        $logger = new class ($warningCalls) implements LoggerInterface {
+            public function __construct(private array &$calls) {}
 
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput(''));
-        $client->expects($this->once())->method('insert');
+            public function emergency(\Stringable|string $message, array $context = []): void {}
+            public function alert(\Stringable|string $message, array $context = []): void {}
+            public function critical(\Stringable|string $message, array $context = []): void {}
+            public function error(\Stringable|string $message, array $context = []): void {}
+            public function warning(\Stringable|string $message, array $context = []): void {
+                $this->calls[] = [$message, $context];
+            }
+            public function notice(\Stringable|string $message, array $context = []): void {}
+            public function info(\Stringable|string $message, array $context = []): void {}
+            public function debug(\Stringable|string $message, array $context = []): void {}
+            public function log($level, \Stringable|string $message, array $context = []): void {}
+        };
+
+        $insertCount = 0;
+        $client = (new FakeClickHouseClient())
+            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withInsertCallback(static function () use (&$insertCount): void {
+                $insertCount++;
+            });
 
         $applied = (new ClickHouseMigrationRunner($client, $dir, $logger))->run();
 
-        $this->assertSame(['002_real.sql'], $applied);
+        Assert::same($applied, ['002_real.sql']);
+        Assert::same($insertCount, 1);
+        Assert::same(count($warningCalls), 1);
     }
 
-    #[Test]
     public function throwsWhenMigrationFileUnreadable(): void
     {
         $dir = $this->makeTempDir();
-        symlink($dir . '/missing_target', $dir . '/001_unreadable.sql'); // broken symlink => file_get_contents() returns false
+        symlink($dir . '/missing_target', $dir . '/001_unreadable.sql');
 
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput(''));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput(''));
         $runner = new ClickHouseMigrationRunner($client, $dir);
 
-        set_error_handler(static fn(): bool => true); // swallow "Is a directory" warning
+        set_error_handler(static fn(): bool => true);
 
         try {
-            $this->expectException(ClickHouseMigrationException::class);
-            $this->expectExceptionMessageMatches('/Cannot read migration file/');
+            Expect::exception(ClickHouseMigrationException::class);
 
             $runner->run();
         } finally {
@@ -228,184 +249,172 @@ final class ClickHouseMigrationRunnerTest
         }
     }
 
-    #[Test]
     public function appliesMigrationFilesInSortedOrder(): void
     {
         $dir = $this->makeTempDir();
-        // Created out of order on purpose.
         file_put_contents($dir . '/030_c.sql', 'SELECT 30');
         file_put_contents($dir . '/010_a.sql', 'SELECT 10');
         file_put_contents($dir . '/020_b.sql', 'SELECT 20');
 
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput(''));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput(''));
 
         $applied = (new ClickHouseMigrationRunner($client, $dir))->run();
 
-        $this->assertSame(['010_a.sql', '020_b.sql', '030_c.sql'], $applied);
+        Assert::same($applied, ['010_a.sql', '020_b.sql', '030_c.sql']);
     }
 
-    #[Test]
     public function statusMarksAllFilesAppliedWhenChecksumsMatch(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
-            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
-            '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
-        ])));
+        $client = (new FakeClickHouseClient())->withSelectCallback(
+            fn () => $this->chOutput($this->appliedRecordsRows([
+                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+                '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
+            ])),
+        );
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
-        $this->assertCount(2, $statuses);
+        Assert::same(count($statuses), 2);
         $this->assertApplied('001_create_demo.sql', '2026-06-14 10:00:00.000000', $statuses[0]);
         $this->assertApplied('002_add_name.sql', '2026-06-14 11:00:00.000000', $statuses[1]);
     }
 
-    #[Test]
     public function statusMarksAllFilesPendingWhenNothingApplied(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput(''));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput(''));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
-        $this->assertCount(2, $statuses);
-        $this->assertSame(ClickHouseMigrationState::Pending, $statuses[0]->state);
-        $this->assertSame(ClickHouseMigrationState::Pending, $statuses[1]->state);
-        $this->assertNull($statuses[0]->appliedAt);
-        $this->assertNull($statuses[1]->appliedAt);
+        Assert::same(count($statuses), 2);
+        Assert::same($statuses[0]->state, ClickHouseMigrationState::Pending);
+        Assert::same($statuses[1]->state, ClickHouseMigrationState::Pending);
+        Assert::null($statuses[0]->appliedAt);
+        Assert::null($statuses[1]->appliedAt);
     }
 
-    #[Test]
     public function statusMarksFileDivergedWhenChecksumMismatches(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
-            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
-            '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
-        ], 'wrong_checksum')));
+        $client = (new FakeClickHouseClient())->withSelectCallback(
+            fn () => $this->chOutput($this->appliedRecordsRows([
+                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+                '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
+            ], 'wrong_checksum')),
+        );
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
-        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[0]->state, '001 должен быть Diverged');
-        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[1]->state, '002 должен быть Diverged');
-        $this->assertNotNull($statuses[0]->appliedAt, 'appliedAt должен сохраняться для Diverged');
+        Assert::same($statuses[0]->state, ClickHouseMigrationState::Diverged);
+        Assert::same($statuses[1]->state, ClickHouseMigrationState::Diverged);
+        Assert::false($statuses[0]->appliedAt === null);
     }
 
-    #[Test]
     public function statusMarksFileDivergedWhenConflictingChecksumsRecorded(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
-            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 2],
-        ])));
+        $client = (new FakeClickHouseClient())->withSelectCallback(
+            fn () => $this->chOutput($this->appliedRecordsRows([
+                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 2],
+            ])),
+        );
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
-        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[0]->state);
-        $this->assertSame('002_add_name.sql', $statuses[1]->name);
-        $this->assertSame(ClickHouseMigrationState::Pending, $statuses[1]->state, '002 отсутствует в _migrations — Pending');
+        Assert::same($statuses[0]->state, ClickHouseMigrationState::Diverged);
+        Assert::same($statuses[1]->name, '002_add_name.sql');
+        Assert::same($statuses[1]->state, ClickHouseMigrationState::Pending);
     }
 
-    #[Test]
     public function statusMarksRecordedMigrationsMissingWhenFileGone(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
-            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
-            '099_dropped.sql' => ['2026-06-14 12:00:00.000000', 1],
-        ])));
+        $client = (new FakeClickHouseClient())->withSelectCallback(
+            fn () => $this->chOutput($this->appliedRecordsRows([
+                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+                '099_dropped.sql' => ['2026-06-14 12:00:00.000000', 1],
+            ])),
+        );
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
-        // sorted by name: 001 (applied), 002 (pending), 099 (missing)
-        $this->assertCount(3, $statuses);
-        $this->assertSame('001_create_demo.sql', $statuses[0]->name);
-        $this->assertSame(ClickHouseMigrationState::Applied, $statuses[0]->state);
-        $this->assertSame('002_add_name.sql', $statuses[1]->name);
-        $this->assertSame(ClickHouseMigrationState::Pending, $statuses[1]->state);
-        $this->assertSame('099_dropped.sql', $statuses[2]->name);
-        $this->assertSame(ClickHouseMigrationState::Missing, $statuses[2]->state, 'файл удалён, но запись в _migrations осталась');
-        $this->assertNull($statuses[2]->checksum, 'Missing файл не имеет содержимого — checksum null');
-        $this->assertSame('2026-06-14 12:00:00.000000', $statuses[2]->appliedAt, 'appliedAt берётся из _migrations');
+        Assert::same(count($statuses), 3);
+        Assert::same($statuses[0]->name, '001_create_demo.sql');
+        Assert::same($statuses[0]->state, ClickHouseMigrationState::Applied);
+        Assert::same($statuses[1]->name, '002_add_name.sql');
+        Assert::same($statuses[1]->state, ClickHouseMigrationState::Pending);
+        Assert::same($statuses[2]->name, '099_dropped.sql');
+        Assert::same($statuses[2]->state, ClickHouseMigrationState::Missing);
+        Assert::null($statuses[2]->checksum);
+        Assert::same($statuses[2]->appliedAt, '2026-06-14 12:00:00.000000');
     }
 
-    #[Test]
     public function statusSortsByNameAcrossAllStates(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        // 000_z.sql recorded but file missing — its name sorts BEFORE files on disk.
-        // Without usort, files-from-glob would come first and 000_z would land last.
-        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
-            '000_z.sql' => ['2026-06-14 09:00:00.000000', 1],
-        ])));
+        $client = (new FakeClickHouseClient())->withSelectCallback(
+            fn () => $this->chOutput($this->appliedRecordsRows([
+                '000_z.sql' => ['2026-06-14 09:00:00.000000', 1],
+            ])),
+        );
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
         $names = array_map(static fn(ClickHouseMigrationStatus $s): string => $s->name, $statuses);
-        $this->assertSame(['000_z.sql', '001_create_demo.sql', '002_add_name.sql'], $names);
+        Assert::same($names, ['000_z.sql', '001_create_demo.sql', '002_add_name.sql']);
     }
 
-    #[Test]
     public function statusDivergedShowsCurrentFileChecksum(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        // Stored checksum is "wrong" but file is intact — Diverged must expose the file's checksum.
-        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
-            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
-        ], 'stored_value')));
+        $client = (new FakeClickHouseClient())->withSelectCallback(
+            fn () => $this->chOutput($this->appliedRecordsRows([
+                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+            ], 'stored_value')),
+        );
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
         $expectedFileChecksum = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/001_create_demo.sql'));
-        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[0]->state);
-        $this->assertSame($expectedFileChecksum, $statuses[0]->checksum, 'Diverged должен показывать checksum текущего файла, не stored');
+        Assert::same($statuses[0]->state, ClickHouseMigrationState::Diverged);
+        Assert::same($statuses[0]->checksum, $expectedFileChecksum);
     }
 
-    #[Test]
     public function statusCreatesMigrationsTableBeforeReading(): void
     {
         $queries = [];
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput(''));
-        $client->method('executeQuery')->willReturnCallback(
-            static function (string $sql) use (&$queries): void {
-                $queries[] = $sql;
-            },
-        );
+        $client = (new FakeClickHouseClient())
+            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withExecuteQueryCallback(
+                static function (string $sql) use (&$queries): void {
+                    $queries[] = $sql;
+                },
+            );
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
-        $this->assertStringContainsString('CREATE TABLE IF NOT EXISTS `_migrations`', $queries[0]);
+        Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `_migrations`');
     }
 
-    #[Test]
     public function statusDoesNotThrowOnDivergedOrConflictingRecords(): void
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput($this->appliedRecordsRows([
-            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 5],
-        ], 'totally_wrong')));
+        $client = (new FakeClickHouseClient())->withSelectCallback(
+            fn () => $this->chOutput($this->appliedRecordsRows([
+                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 5],
+            ], 'totally_wrong')),
+        );
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
-        $this->assertSame(ClickHouseMigrationState::Diverged, $statuses[0]->state, 'status() не должен выбрасывать, в отличие от run()');
+        Assert::same($statuses[0]->state, ClickHouseMigrationState::Diverged);
     }
 
     /**
      * @param list<string> $queries Captures executeQuery() SQL by reference.
      */
-    private function queryCapturingClient(array &$queries): ClickHouseClient
+    private function queryCapturingClient(array &$queries)
     {
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('select')->willReturn($this->chOutput(''));
-        $client->method('executeQuery')->willReturnCallback(
-            static function (string $sql) use (&$queries): void {
-                $queries[] = $sql;
-            },
-        );
-
-        return $client;
+        return (new FakeClickHouseClient())
+            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withExecuteQueryCallback(
+                static function (string $sql) use (&$queries): void {
+                    $queries[] = $sql;
+                },
+            );
     }
 
     private function makeTempDir(): string

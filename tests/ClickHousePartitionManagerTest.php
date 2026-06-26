@@ -4,26 +4,26 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
+use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHousePartitionManager;
-use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Expect;
+use Testo\Test;
 
-#[CoversClass(ClickHousePartitionManager::class)]
-final class ClickHousePartitionManagerTest extends TestCase
+#[Test]
+#[Covers(ClickHousePartitionManager::class)]
+final class ClickHousePartitionManagerTest
 {
     /**
      * @return array{0: ClickHousePartitionManager, 1: \ArrayObject<int, string>}
      */
     private function manager(): array
     {
-        /** @var \ArrayObject<int, string> $queries */
         $queries = new \ArrayObject();
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('executeQuery')->willReturnCallback(
+        $client = (new FakeClickHouseClient())->withExecuteQueryCallback(
             static function (string $query) use ($queries): void {
                 $queries->append($query);
             },
@@ -32,7 +32,6 @@ final class ClickHousePartitionManagerTest extends TestCase
         return [new ClickHousePartitionManager($client), $queries];
     }
 
-    #[Test]
     public function dropDetachAttachFreeze(): void
     {
         [$manager, $queries] = $this->manager();
@@ -42,35 +41,32 @@ final class ClickHousePartitionManagerTest extends TestCase
         $manager->attachPartition('events', '202401');
         $manager->freezePartition('events', '202401');
 
-        $this->assertSame([
+        Assert::same($queries->getArrayCopy(), [
             "ALTER TABLE events DROP PARTITION ID '202401'",
             "ALTER TABLE events DETACH PARTITION ID '202401'",
             "ALTER TABLE events ATTACH PARTITION ID '202401'",
             "ALTER TABLE events FREEZE PARTITION ID '202401'",
-        ], $queries->getArrayCopy());
+        ]);
     }
 
-    #[Test]
     public function escapesPartitionId(): void
     {
         [$manager, $queries] = $this->manager();
 
         $manager->dropPartition('events', "2024'01");
 
-        $this->assertSame("ALTER TABLE events DROP PARTITION ID '2024\\'01'", $queries[0]);
+        Assert::same($queries[0], "ALTER TABLE events DROP PARTITION ID '2024\\'01'");
     }
 
-    #[Test]
     public function clearColumnInPartition(): void
     {
         [$manager, $queries] = $this->manager();
 
         $manager->clearColumnInPartition('events', '202401', 'payload');
 
-        $this->assertSame("ALTER TABLE events CLEAR COLUMN payload IN PARTITION ID '202401'", $queries[0]);
+        Assert::same($queries[0], "ALTER TABLE events CLEAR COLUMN payload IN PARTITION ID '202401'");
     }
 
-    #[Test]
     public function moveAndReplace(): void
     {
         [$manager, $queries] = $this->manager();
@@ -78,39 +74,35 @@ final class ClickHousePartitionManagerTest extends TestCase
         $manager->movePartition('src', 'dst', '1');
         $manager->replacePartition('src', 'dst', '1');
 
-        $this->assertSame([
+        Assert::same($queries->getArrayCopy(), [
             "ALTER TABLE src MOVE PARTITION ID '1' TO TABLE dst",
             "ALTER TABLE dst REPLACE PARTITION ID '1' FROM src",
-        ], $queries->getArrayCopy());
+        ]);
     }
 
-    #[Test]
     public function rejectsMalformedTable(): void
     {
         [$manager] = $this->manager();
 
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $manager->dropPartition('events; DROP TABLE x', '1');
     }
 
-    #[Test]
     public function rejectsMalformedColumn(): void
     {
         [$manager] = $this->manager();
 
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $manager->clearColumnInPartition('events', '1', 'payload; --');
     }
 
-    #[Test]
     public function getPartitionsBindsTableAndParsesRows(): void
     {
         $capturedSql = null;
         $capturedParams = null;
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('selectWithParams')->willReturnCallback(
+        $client = (new FakeClickHouseClient())->withSelectWithParamsCallback(
             static function (string $sql, array $params) use (&$capturedSql, &$capturedParams): Output {
                 $capturedSql = $sql;
                 $capturedParams = $params;
@@ -124,66 +116,60 @@ final class ClickHousePartitionManagerTest extends TestCase
 
         $result = (new ClickHousePartitionManager($client))->getPartitions('events');
 
-        $this->assertSame(['tbl' => 'events'], $capturedParams);
-        $this->assertSame(
+        Assert::same($capturedParams, ['tbl' => 'events']);
+        Assert::same(
+            $capturedSql,
             'SELECT partition, partition_id, sum(rows) AS rows, sum(bytes_on_disk) AS bytes '
             . 'FROM system.parts WHERE active AND database = currentDatabase() AND table = {tbl:String} '
             . 'GROUP BY partition, partition_id ORDER BY partition',
-            $capturedSql,
         );
-        $this->assertSame([
+        Assert::same($result, [
             ['partition' => '0', 'partition_id' => '0', 'rows' => 10, 'bytes' => 2048],
             ['partition' => '1', 'partition_id' => '1', 'rows' => 5, 'bytes' => 1024],
-        ], $result);
+        ]);
     }
 
-    #[Test]
     public function getPartitionsRejectsMalformedTable(): void
     {
         [$manager] = $this->manager();
 
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $manager->getPartitions('events; DROP TABLE x');
     }
 
-    #[Test]
     public function getPartitionsRejectsMalformedQualifiedTable(): void
     {
         [$manager] = $this->manager();
 
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $manager->getPartitions('analytics.events; DROP TABLE x');
     }
 
-    #[Test]
     public function movePartitionRejectsMalformedTargetTable(): void
     {
         [$manager] = $this->manager();
 
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $manager->movePartition('src', 'dst; DROP TABLE x', '1');
     }
 
-    #[Test]
     public function replacePartitionRejectsMalformedSourceTable(): void
     {
         [$manager] = $this->manager();
 
-        $this->expectException(\InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class);
 
         $manager->replacePartition('src; DROP TABLE x', 'dst', '1');
     }
 
-    #[Test]
     public function getPartitionsBindsDatabaseForQualifiedTable(): void
     {
         $capturedParams = null;
         $capturedSql = null;
-        $client = $this->createMock(ClickHouseClient::class);
-        $client->method('selectWithParams')->willReturnCallback(
+        $client = (new FakeClickHouseClient())->withSelectWithParamsCallback(
             static function (string $sql, array $params) use (&$capturedParams, &$capturedSql): Output {
                 $capturedSql = $sql;
                 $capturedParams = $params;
@@ -194,7 +180,7 @@ final class ClickHousePartitionManagerTest extends TestCase
 
         (new ClickHousePartitionManager($client))->getPartitions('analytics.events');
 
-        $this->assertStringContainsString('database = {db:String}', (string) $capturedSql);
-        $this->assertSame(['db' => 'analytics', 'tbl' => 'events'], $capturedParams);
+        Assert::string($capturedSql)->contains('database = {db:String}');
+        Assert::same($capturedParams, ['db' => 'analytics', 'tbl' => 'events']);
     }
 }
