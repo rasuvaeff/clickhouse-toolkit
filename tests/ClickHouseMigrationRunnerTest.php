@@ -42,7 +42,7 @@ final class ClickHouseMigrationRunnerTest
     {
         $insertCount = 0;
         $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withSelectCallback(fn() => $this->chOutput(''))
             ->withInsertCallback(static function () use (&$insertCount): void {
                 $insertCount++;
             });
@@ -59,7 +59,7 @@ final class ClickHouseMigrationRunnerTest
     {
         $insertCalled = false;
         $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn () => $this->chOutput($this->appliedRows()))
+            ->withSelectCallback(fn() => $this->chOutput($this->appliedRows()))
             ->withInsertCallback(static function () use (&$insertCalled): void {
                 $insertCalled = true;
             });
@@ -73,7 +73,7 @@ final class ClickHouseMigrationRunnerTest
     public function throwsWhenAppliedMigrationContentChanged(): void
     {
         $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":1}', sha1('tampered'));
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput($row));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput($row));
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
@@ -85,7 +85,7 @@ final class ClickHouseMigrationRunnerTest
     public function throwsWhenMigrationHasConflictingChecksums(): void
     {
         $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":2}', sha1('x'));
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput($row));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput($row));
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
@@ -122,7 +122,7 @@ final class ClickHouseMigrationRunnerTest
     {
         $inserts = [];
         $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withSelectCallback(fn() => $this->chOutput(''))
             ->withInsertCallback(
                 static function (string $table, array $values, array $columns) use (&$inserts): void {
                     $inserts[] = ['table' => $table, 'values' => $values, 'columns' => $columns];
@@ -159,14 +159,15 @@ final class ClickHouseMigrationRunnerTest
             public function error(\Stringable|string $message, array $context = []): void {}
             public function warning(\Stringable|string $message, array $context = []): void {}
             public function notice(\Stringable|string $message, array $context = []): void {}
-            public function info(\Stringable|string $message, array $context = []): void {
+            public function info(\Stringable|string $message, array $context = []): void
+            {
                 $this->calls[] = [$message, $context];
             }
             public function debug(\Stringable|string $message, array $context = []): void {}
             public function log($level, \Stringable|string $message, array $context = []): void {}
         };
 
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput(''));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR, $logger))->run();
 
@@ -182,7 +183,7 @@ final class ClickHouseMigrationRunnerTest
 
         $insertCount = 0;
         $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn () => $this->chOutput($row))
+            ->withSelectCallback(fn() => $this->chOutput($row))
             ->withInsertCallback(static function () use (&$insertCount): void {
                 $insertCount++;
             });
@@ -207,7 +208,8 @@ final class ClickHouseMigrationRunnerTest
             public function alert(\Stringable|string $message, array $context = []): void {}
             public function critical(\Stringable|string $message, array $context = []): void {}
             public function error(\Stringable|string $message, array $context = []): void {}
-            public function warning(\Stringable|string $message, array $context = []): void {
+            public function warning(\Stringable|string $message, array $context = []): void
+            {
                 $this->calls[] = [$message, $context];
             }
             public function notice(\Stringable|string $message, array $context = []): void {}
@@ -218,7 +220,7 @@ final class ClickHouseMigrationRunnerTest
 
         $insertCount = 0;
         $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withSelectCallback(fn() => $this->chOutput(''))
             ->withInsertCallback(static function () use (&$insertCount): void {
                 $insertCount++;
             });
@@ -235,7 +237,7 @@ final class ClickHouseMigrationRunnerTest
         $dir = $this->makeTempDir();
         symlink($dir . '/missing_target', $dir . '/001_unreadable.sql');
 
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput(''));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
         $runner = new ClickHouseMigrationRunner($client, $dir);
 
         set_error_handler(static fn(): bool => true);
@@ -256,7 +258,7 @@ final class ClickHouseMigrationRunnerTest
         file_put_contents($dir . '/010_a.sql', 'SELECT 10');
         file_put_contents($dir . '/020_b.sql', 'SELECT 20');
 
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput(''));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
 
         $applied = (new ClickHouseMigrationRunner($client, $dir))->run();
 
@@ -266,7 +268,7 @@ final class ClickHouseMigrationRunnerTest
     public function statusMarksAllFilesAppliedWhenChecksumsMatch(): void
     {
         $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn () => $this->chOutput($this->appliedRecordsRows([
+            fn() => $this->chOutput($this->appliedRecordsRows([
                 '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
                 '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
             ])),
@@ -281,7 +283,7 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusMarksAllFilesPendingWhenNothingApplied(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn () => $this->chOutput(''));
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -295,7 +297,7 @@ final class ClickHouseMigrationRunnerTest
     public function statusMarksFileDivergedWhenChecksumMismatches(): void
     {
         $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn () => $this->chOutput($this->appliedRecordsRows([
+            fn() => $this->chOutput($this->appliedRecordsRows([
                 '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
                 '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
             ], 'wrong_checksum')),
@@ -311,7 +313,7 @@ final class ClickHouseMigrationRunnerTest
     public function statusMarksFileDivergedWhenConflictingChecksumsRecorded(): void
     {
         $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn () => $this->chOutput($this->appliedRecordsRows([
+            fn() => $this->chOutput($this->appliedRecordsRows([
                 '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 2],
             ])),
         );
@@ -326,7 +328,7 @@ final class ClickHouseMigrationRunnerTest
     public function statusMarksRecordedMigrationsMissingWhenFileGone(): void
     {
         $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn () => $this->chOutput($this->appliedRecordsRows([
+            fn() => $this->chOutput($this->appliedRecordsRows([
                 '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
                 '099_dropped.sql' => ['2026-06-14 12:00:00.000000', 1],
             ])),
@@ -348,7 +350,7 @@ final class ClickHouseMigrationRunnerTest
     public function statusSortsByNameAcrossAllStates(): void
     {
         $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn () => $this->chOutput($this->appliedRecordsRows([
+            fn() => $this->chOutput($this->appliedRecordsRows([
                 '000_z.sql' => ['2026-06-14 09:00:00.000000', 1],
             ])),
         );
@@ -362,7 +364,7 @@ final class ClickHouseMigrationRunnerTest
     public function statusDivergedShowsCurrentFileChecksum(): void
     {
         $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn () => $this->chOutput($this->appliedRecordsRows([
+            fn() => $this->chOutput($this->appliedRecordsRows([
                 '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
             ], 'stored_value')),
         );
@@ -378,7 +380,7 @@ final class ClickHouseMigrationRunnerTest
     {
         $queries = [];
         $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withSelectCallback(fn() => $this->chOutput(''))
             ->withExecuteQueryCallback(
                 static function (string $sql) use (&$queries): void {
                     $queries[] = $sql;
@@ -393,7 +395,7 @@ final class ClickHouseMigrationRunnerTest
     public function statusDoesNotThrowOnDivergedOrConflictingRecords(): void
     {
         $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn () => $this->chOutput($this->appliedRecordsRows([
+            fn() => $this->chOutput($this->appliedRecordsRows([
                 '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 5],
             ], 'totally_wrong')),
         );
@@ -409,7 +411,7 @@ final class ClickHouseMigrationRunnerTest
     private function queryCapturingClient(array &$queries)
     {
         return (new FakeClickHouseClient())
-            ->withSelectCallback(fn () => $this->chOutput(''))
+            ->withSelectCallback(fn() => $this->chOutput(''))
             ->withExecuteQueryCallback(
                 static function (string $sql) use (&$queries): void {
                     $queries[] = $sql;
@@ -477,10 +479,10 @@ final class ClickHouseMigrationRunnerTest
 
     private function assertApplied(string $name, string $appliedAt, ClickHouseMigrationStatus $status): void
     {
-        $this->assertSame($name, $status->name);
-        $this->assertSame(ClickHouseMigrationState::Applied, $status->state);
-        $this->assertSame($appliedAt, $status->appliedAt);
-        $this->assertNotNull($status->checksum, 'Applied должна иметь checksum из файла');
+        Assert::same($status->name, $name);
+        Assert::same($status->state, ClickHouseMigrationState::Applied);
+        Assert::same($status->appliedAt, $appliedAt);
+        Assert::notNull($status->checksum);
     }
 
     /**

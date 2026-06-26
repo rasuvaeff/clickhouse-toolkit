@@ -226,7 +226,7 @@ final class ClickHouseDataReaderTest
     public function readAppliesMapperToEachRow(): void
     {
         $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn () => $this->makeOutput([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]),
+            fn() => $this->makeOutput([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]),
         );
 
         $reader = new ClickHouseDataReader(

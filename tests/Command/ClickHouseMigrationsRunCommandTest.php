@@ -54,7 +54,7 @@ final class ClickHouseMigrationsRunCommandTest
         }
 
         $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn () => new JsonEachRow(implode("\n", $rows)));
+            ->withSelectCallback(fn() => new JsonEachRow(implode("\n", $rows)));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
@@ -74,7 +74,7 @@ final class ClickHouseMigrationsRunCommandTest
             'wrong',
         );
         $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn () => new JsonEachRow($row));
+            ->withSelectCallback(fn() => new JsonEachRow($row));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
@@ -89,7 +89,7 @@ final class ClickHouseMigrationsRunCommandTest
     private function tester(string $dir): CommandTester
     {
         $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn () => new JsonEachRow(''));
+            ->withSelectCallback(fn() => new JsonEachRow(''));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());

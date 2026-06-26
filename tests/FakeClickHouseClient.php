@@ -40,42 +40,49 @@ final class FakeClickHouseClient implements ClickHouseClient
     public function withExecuteQueryCallback(?Closure $callback): self
     {
         $this->executeQueryCallback = $callback;
+
         return $this;
     }
 
     public function withExecuteQueryWithParamsCallback(?Closure $callback): self
     {
         $this->executeQueryWithParamsCallback = $callback;
+
         return $this;
     }
 
     public function withSelectCallback(?Closure $callback): self
     {
         $this->selectCallback = $callback;
+
         return $this;
     }
 
     public function withSelectWithParamsCallback(?Closure $callback): self
     {
         $this->selectWithParamsCallback = $callback;
+
         return $this;
     }
 
     public function withInsertCallback(?Closure $callback): self
     {
         $this->insertCallback = $callback;
+
         return $this;
     }
 
     public function withInsertWithFormatCallback(?Closure $callback): self
     {
         $this->insertWithFormatCallback = $callback;
+
         return $this;
     }
 
     public function withInsertPayloadCallback(?Closure $callback): self
     {
         $this->insertPayloadCallback = $callback;
+
         return $this;
     }
 
@@ -116,7 +123,7 @@ final class FakeClickHouseClient implements ClickHouseClient
     }
 
     #[\Override]
-    public function insert(Table|string $table, array $values, array|null $columns = null, array $settings = []): void
+    public function insert(Table|string $table, array $values, ?array $columns = null, array $settings = []): void
     {
         if ($this->insertCallback !== null) {
             ($this->insertCallback)($table, $values, $columns, $settings);
@@ -129,8 +136,7 @@ final class FakeClickHouseClient implements ClickHouseClient
         Format $inputFormat,
         string $data,
         array $settings = [],
-    ): void
-    {
+    ): void {
         if ($this->insertWithFormatCallback !== null) {
             ($this->insertWithFormatCallback)($table, $inputFormat, $data, $settings);
         }
@@ -143,8 +149,7 @@ final class FakeClickHouseClient implements ClickHouseClient
         StreamInterface $payload,
         array $columns = [],
         array $settings = [],
-    ): void
-    {
+    ): void {
         if ($this->insertPayloadCallback !== null) {
             ($this->insertPayloadCallback)($table, $inputFormat, $payload, $columns, $settings);
         }

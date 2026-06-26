@@ -12,13 +12,13 @@ use SimPod\ClickHouseClient\Output\Output;
  */
 final class FakeOutput implements Output
 {
-    #[\Override]
+    public function __construct(string $contents = '') {}
+
     public function getIterator(): \Traversable
     {
         return new \EmptyIterator();
     }
 
-    #[\Override]
     public function count(): int
     {
         return 0;

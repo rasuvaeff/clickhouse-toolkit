@@ -139,7 +139,7 @@ final class ClickHouseMigrationsStatusCommandTest
     private function tester(string $dir, string $chRows): CommandTester
     {
         $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn () => new JsonEachRow($chRows));
+            ->withSelectCallback(fn() => new JsonEachRow($chRows));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsStatusCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());

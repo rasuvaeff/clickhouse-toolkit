@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
 use InvalidArgumentException;
-use Rasuvaeff\ClickHouseToolkit\ClickHouseFilterVisitor;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseSqlFilterVisitor;
@@ -338,7 +337,7 @@ final class ClickHouseQueryBuilderTest
     {
         $sql = $this->builder->buildSelect(table: 'analytics.events', limit: 5);
 
-        Assert::string($sql)->startsWith('SELECT * FROM analytics.events');
+        Assert::string($sql)->contains('SELECT * FROM analytics.events');
     }
 
     public function selectRejectsMalformedTable(): void

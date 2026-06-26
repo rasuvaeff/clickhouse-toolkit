@@ -20,6 +20,7 @@ final class FakePsrHttpClient implements ClientInterface
     public function withSendRequestCallback(?Closure $callback): self
     {
         $this->sendRequestCallback = $callback;
+
         return $this;
     }
 

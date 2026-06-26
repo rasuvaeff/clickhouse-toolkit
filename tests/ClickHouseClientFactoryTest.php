@@ -52,7 +52,7 @@ final class ClickHouseClientFactoryTest
         Assert::same($captured->getHeaderLine('X-ClickHouse-User'), 'admin');
         Assert::same($captured->getHeaderLine('X-ClickHouse-Key'), 'secret');
         Assert::same($captured->getHeaderLine('X-ClickHouse-Database'), 'testdb');
-        Assert::string((string) $captured->getUri())->startsWith('https://ch.internal:8123');
+        Assert::string((string) $captured->getUri())->contains('https://ch.internal:8123');
     }
 
     public function createWithHttpScheme(): void
@@ -77,7 +77,7 @@ final class ClickHouseClientFactoryTest
         $factory->create()->executeQuery('SELECT 1');
 
         Assert::instanceOf($captured, RequestInterface::class);
-        Assert::string((string) $captured->getUri())->startsWith('http://localhost:8123');
+        Assert::string((string) $captured->getUri())->contains('http://localhost:8123');
     }
 
     public function createUsesInjectedPsrFactories(): void

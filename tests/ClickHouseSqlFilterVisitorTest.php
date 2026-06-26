@@ -5,6 +5,12 @@ declare(strict_types=1);
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
 use Rasuvaeff\ClickHouseToolkit\ClickHouseSqlFilterVisitor;
+use Testo\Assert;
+use Testo\Codecov\Covers;
+use Testo\Data\DataProvider;
+use Testo\Expect;
+use Testo\Lifecycle\BeforeTest;
+use Testo\Test;
 use Yiisoft\Data\Reader\Filter\All;
 use Yiisoft\Data\Reader\Filter\AndX;
 use Yiisoft\Data\Reader\Filter\Between;
@@ -19,12 +25,6 @@ use Yiisoft\Data\Reader\Filter\None;
 use Yiisoft\Data\Reader\Filter\Not;
 use Yiisoft\Data\Reader\Filter\OrX;
 use Yiisoft\Data\Reader\FilterInterface;
-use Testo\Assert;
-use Testo\Codecov\Covers;
-use Testo\Data\DataProvider;
-use Testo\Expect;
-use Testo\Lifecycle\BeforeTest;
-use Testo\Test;
 
 #[Test]
 #[Covers(ClickHouseSqlFilterVisitor::class)]
