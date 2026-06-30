@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2 — 2026-06-30
+
+- Add `/benchmarks` and `/Makefile` to `.gitattributes` export-ignore.
+
 ## 1.2.1 — 2026-06-26
 
 - Migrate tests from PHPUnit to Testo (testo/testo + testo/bridge-infection + testo/bench).
