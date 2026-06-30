@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
 use Rasuvaeff\ClickHouseToolkit\ClickHouseSqlFilterVisitor;
+use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Gen;
+use Rasuvaeff\PropertyTesting\Property;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Data\DataProvider;
@@ -367,5 +370,59 @@ final class ClickHouseSqlFilterVisitorTest
         yield 'like' => [new Like('secret', 'x')];
         yield 'in' => [new In('secret', [1])];
         yield 'between' => [new Between('secret', 1, 2)];
+    }
+
+    #[Property(runs: 300)]
+    public function equalsAlwaysBindsValueAsParameter(string $value): void
+    {
+        $index = 0;
+        $result = $this->visitor->visitEquals(new Equals('status', $value), $index, false);
+
+        Assert::same($result[0], 'status = {p0:String}');
+        Assert::same($result[1], ['p0' => $value]);
+        Assert::same($index, 1);
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    private function equalsAlwaysBindsValueAsParameterGenerators(): array
+    {
+        return ['value' => Gen::stringAscii()];
+    }
+
+    #[Property(runs: 300)]
+    public function betweenAlwaysBindsExactlyTwoParameters(int $min, int $max): void
+    {
+        $index = 0;
+        $result = $this->visitor->visitBetween(new Between('id', $min, $max), $index, false);
+
+        Assert::true(str_contains($result[0], 'BETWEEN'));
+        Assert::same(count($result[1]), 2);
+        Assert::same($index, 2);
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    private function betweenAlwaysBindsExactlyTwoParametersGenerators(): array
+    {
+        return [
+            'min' => Gen::int(),
+            'max' => Gen::int(),
+        ];
+    }
+
+    #[Property(runs: 300)]
+    public function inBindsOneParameterPerValue(array $values): void
+    {
+        $index = 0;
+        $result = $this->visitor->visitIn(new In('id', $values), $index, false);
+
+        Assert::true(str_contains($result[0], 'IN ('));
+        Assert::same(count($result[1]), count($values));
+        Assert::same($index, count($values));
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    private function inBindsOneParameterPerValueGenerators(): array
+    {
+        return ['values' => Gen::nonEmptyArrayOf(Gen::intBetween(-1_000, 1_000))];
     }
 }
