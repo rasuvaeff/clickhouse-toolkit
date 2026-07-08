@@ -12,6 +12,9 @@ use SimPod\ClickHouseClient\Schema\Table;
  * Each row is projected onto the declared columns (extra keys dropped, missing
  * keys filled with null), so callers may pass loosely-shaped associative rows.
  *
+ * Optional ClickHouse query settings (e.g. `async_insert`) are passed through to
+ * every batch INSERT.
+ *
  * @api
  */
 final readonly class ClickHouseBatchWriter implements ClickHouseWriterInterface
@@ -23,6 +26,9 @@ final readonly class ClickHouseBatchWriter implements ClickHouseWriterInterface
      * @param string $table Target table, optionally db-qualified (`db.table`).
      * @param list<string> $columns Target columns, in insert order. Validated as
      *     identifiers — they are not escaped, so pass only trusted names.
+     * @param array<string, float|int|string> $settings ClickHouse query settings
+     *     applied to every batch INSERT, e.g. `['async_insert' => 1,
+     *     'wait_for_async_insert' => 0]`. Passed through verbatim to the client.
      *
      * @throws \InvalidArgumentException on a malformed table/column identifier or batch size < 1.
      */
@@ -31,6 +37,7 @@ final readonly class ClickHouseBatchWriter implements ClickHouseWriterInterface
         private string $table,
         private array $columns,
         private int $batchSize = 1000,
+        private array $settings = [],
     ) {
         if ($this->batchSize < 1) {
             throw new \InvalidArgumentException('Batch size must be at least 1.');
@@ -93,7 +100,7 @@ final readonly class ClickHouseBatchWriter implements ClickHouseWriterInterface
     private function flush(array $rows): void
     {
         try {
-            $this->client->insert(table: $this->target, values: $rows, columns: $this->columns);
+            $this->client->insert(table: $this->target, values: $rows, columns: $this->columns, settings: $this->settings);
         } catch (\Throwable $e) {
             throw new ClickHouseWriteException(
                 sprintf('Failed to insert %d row(s) into "%s": %s', count($rows), $this->table, $e->getMessage()),

@@ -329,6 +329,20 @@ $writer->write($rows); // $rows: iterable<array<string, mixed>> — a generator 
 
 Implements `ClickHouseWriterInterface` (`write(iterable $rows): void`).
 
+For high-throughput ingestion, pass ClickHouse query `settings` — they are
+applied to every batch `INSERT`. For example, offload buffering to the server
+with [async inserts](https://clickhouse.com/docs/en/optimize/asynchronous-inserts):
+
+```php
+$writer = new ClickHouseBatchWriter(
+    client: $client,
+    table: 'events',
+    columns: ['id', 'type', 'user_id', 'created_at'],
+    batchSize: 10_000,
+    settings: ['async_insert' => 1, 'wait_for_async_insert' => 0],
+);
+```
+
 ### `ClickHouseTableBuilder`
 
 Fluent `CREATE TABLE` builder. `build()` returns the SQL; `execute()` runs it via
