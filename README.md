@@ -20,6 +20,7 @@ $sql = $qb->buildSelect(table: 'events', where: $where->sql, limit: 20);
 - **`ClickHouseQueryBuilder`** — turn [`yiisoft/data`](https://github.com/yiisoft/data) filters and sort into safe, parameterized SQL.
 - **`ClickHouseFilterVisitor`** + **`ClickHouseSqlFilterVisitor`** — extensible visitor for SQL generation per filter type.
 - **`ClickHouseDataReader`** — an immutable `DataReaderInterface` ready for yiisoft/data paginators.
+- **`ClickHouseKeysetReader`** — bounded-memory streaming of large result sets via keyset pagination.
 - **`ClickHouseBatchWriter`** — buffered, batched inserts.
 - **`ClickHouseTableBuilder`** — fluent `CREATE TABLE` DDL.
 - **`ClickHousePartitionManager`** — list / drop / detach / attach / move / freeze partitions.
@@ -44,6 +45,7 @@ Built on top of [`simpod/clickhouse-client`](https://github.com/simPod/clickhous
   - [ClickHouseQueryBuilder & WhereClause](#clickhousequerybuilder--whereclause)
   - [ClickHouseFilterVisitor](#clickhousefiltervisitor)
   - [ClickHouseDataReader](#clickhousedatareader)
+  - [ClickHouseKeysetReader](#clickhousekeysetreader)
   - [ClickHouseBatchWriter](#clickhousebatchwriter)
   - [ClickHouseTableBuilder](#clickhousetablebuilder)
   - [ClickHousePartitionManager](#clickhousepartitionmanager)
@@ -309,6 +311,46 @@ $rows  = $page->read();    // mapped values
 ```
 
 Implements `read()`, `readOne()`, `count()`, `getIterator()`, and the immutable `withFilter/withSort/withLimit/withOffset` (+ getters). With no limit set, `read()` omits `LIMIT` and returns the full result.
+
+> `read()` / `getIterator()` materialize the whole result in memory. To iterate a large result set with bounded memory, use `ClickHouseKeysetReader` below.
+
+### `ClickHouseKeysetReader`
+
+Streams a large result set with **bounded memory** using keyset (seek) pagination. Each page is a normal query — `WHERE <key> > <last-seen> ORDER BY <key> LIMIT <pageSize>` — so the whole result is never loaded at once and, unlike `LIMIT/OFFSET`, deep pages stay cheap (a primary-index range scan instead of skipping rows). The query builder's mandatory (tenant/ACL) filter and the allow-list apply on every page.
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseKeysetReader;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseDataType as T;
+use Yiisoft\Data\Reader\Filter\Equals;
+
+$reader = new ClickHouseKeysetReader(
+    client: $client,
+    table: 'events',
+    queryBuilder: new ClickHouseQueryBuilder(
+        allowedFields: ['id', 'status'],
+        fieldTypes: ['id' => T::UInt64],
+    ),
+    mapper: static fn (array $row): int => (int) $row['id'],
+    keyColumns: ['id' => T::UInt64],   // ordered map column => ClickHouse type
+    columns: ['id', 'status'],          // key columns are added automatically
+    pageSize: 1000,
+    filter: new Equals('status', 'active'),
+);
+
+foreach ($reader->stream() as $id) {   // one page in memory at a time
+    // ...
+}
+```
+
+The key columns **must form a unique, ascending total order** — for a non-unique sort column add a unique tie-breaker, expressed as a column tuple compared with ClickHouse tuple comparison:
+
+```php
+keyColumns: ['created_at' => T::DateTime, 'id' => T::UInt64],
+// boundary: (created_at, id) > ({ck0:DateTime}, {ck1:UInt64})
+```
+
+Otherwise rows sharing a boundary key can be skipped. Key columns must be non-nullable. Boundary parameters use reserved `ck0`, `ck1`, … names — keep them clear of any `ClickHouseRawFilter` in your base filter.
 
 ### `ClickHouseBatchWriter`
 

@@ -137,6 +137,27 @@ $rows  = $page->read();   // list<TValue> ; readOne(): ?TValue ; getIterator()
 $count = $page->count();  // ignores limit/offset
 // Immutable: every with*() returns a new instance. Negative limit/offset throw.
 // Plugs into yiisoft/data OffsetPaginator/KeysetPaginator.
+// NOTE: read()/getIterator() materialize the whole result. For large scans use KeysetReader.
+```
+
+## KeysetReader (bounded-memory streaming of large results)
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ClickHouseKeysetReader;
+
+$reader = new ClickHouseKeysetReader(
+    client: $client, table: 'events', queryBuilder: $qb,
+    mapper: static fn (array $row): int => (int) $row['id'],
+    keyColumns: ['id' => 'UInt64'],   // ordered map column=>type; key cols auto-added to projection
+    columns: ['id','status'], pageSize: 1000,
+    filter: new Equals('status','active'), // optional base filter, AND-combined with the boundary
+);
+foreach ($reader->stream() as $value) { /* one page in memory at a time */ }
+// Keyset (seek) pagination: WHERE key > last ORDER BY key LIMIT pageSize. Cheap deep pages (no OFFSET skip).
+// keyColumns MUST be a unique ascending total order; add a tie-breaker for non-unique sort columns:
+//   ['created_at'=>'DateTime','id'=>'UInt64'] => (created_at, id) > ({ck0:DateTime}, {ck1:UInt64}).
+// Boundary params are named ck0, ck1, … (reserved; keep clear of ClickHouseRawFilter names). Keys must be non-null.
+// Mandatory (tenant/ACL) filter + allow-list of the query builder apply on every page.
 ```
 
 ## Batch writer

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.0 — 2026-07-08
+
+- Added `ClickHouseKeysetReader` — bounded-memory streaming of large result sets via keyset (seek) pagination (`WHERE key > last ORDER BY key LIMIT pageSize`), yielding rows through a generator. Supports composite keys (tuple comparison), a base filter AND-combined with the boundary, and preserves the query builder's mandatory filter and allow-list on every page.
+
 ## 1.3.0 — 2026-07-08
 
 - Added an optional `settings` argument to `ClickHouseBatchWriter` — ClickHouse query settings (e.g. `['async_insert' => 1, 'wait_for_async_insert' => 0]`) applied to every batch `INSERT`. Backward compatible: defaults to no settings.
