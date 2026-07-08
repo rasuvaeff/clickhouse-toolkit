@@ -157,6 +157,44 @@ final class ClickHouseBatchWriterTest
         Assert::same($captured->database, 'analytics');
     }
 
+    public function appliesSettingsToEveryBatch(): void
+    {
+        $seen = [];
+        $client = (new FakeClickHouseClient())->withInsertCallback(
+            static function (Table|string $table, array $values, ?array $columns, array $settings) use (&$seen): void {
+                $seen[] = $settings;
+            },
+        );
+
+        $writer = new ClickHouseBatchWriter(
+            $client,
+            'events',
+            ['id'],
+            batchSize: 1000,
+            settings: ['async_insert' => 1, 'wait_for_async_insert' => 0],
+        );
+        $writer->write($this->rows(1500));
+
+        Assert::same($seen, [
+            ['async_insert' => 1, 'wait_for_async_insert' => 0],
+            ['async_insert' => 1, 'wait_for_async_insert' => 0],
+        ]);
+    }
+
+    public function defaultsToEmptySettings(): void
+    {
+        $captured = 'unset';
+        $client = (new FakeClickHouseClient())->withInsertCallback(
+            static function (Table|string $table, array $values, ?array $columns, array $settings) use (&$captured): void {
+                $captured = $settings;
+            },
+        );
+
+        (new ClickHouseBatchWriter($client, 'events', ['id']))->write([['id' => 1]]);
+
+        Assert::same($captured, []);
+    }
+
     public function wrapsClientFailures(): void
     {
         $client = (new FakeClickHouseClient())->withInsertCallback(

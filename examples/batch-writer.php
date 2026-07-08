@@ -15,6 +15,8 @@ $writer = new ClickHouseBatchWriter(
     table: 'events',
     columns: ['id', 'type', 'user_id', 'payload', 'created_at'],
     batchSize: 1000,
+    // Optional: ClickHouse query settings applied to every batch INSERT, e.g.
+    // settings: ['async_insert' => 1, 'wait_for_async_insert' => 0],
 );
 
 // A generator keeps memory flat — rows are flushed in batches of 1000.

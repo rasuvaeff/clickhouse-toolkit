@@ -148,6 +148,10 @@ $writer = new ClickHouseBatchWriter($client, 'events', ['id','type','created_at'
 $writer->write($rows); // iterable<array<string,mixed>>; a generator keeps memory flat
 // Rows are projected onto declared columns (extra keys dropped, missing => null).
 // table/columns validated; failures wrapped in ClickHouseWriteException.
+
+// Optional 5th arg: ClickHouse query settings applied to every batch INSERT.
+$writer = new ClickHouseBatchWriter($client, 'events', ['id','type'], batchSize: 10000,
+    settings: ['async_insert' => 1, 'wait_for_async_insert' => 0]);
 ```
 
 ## Type names (optional helper)

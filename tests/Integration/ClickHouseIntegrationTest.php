@@ -106,6 +106,31 @@ final class ClickHouseIntegrationTest
         Assert::same($this->reader()->count(), 5);
     }
 
+    public function batchWriterAppliesAsyncInsertSettings(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+
+        $this->client->executeQuery('DROP TABLE IF EXISTS it_async');
+        $this->client->executeQuery('CREATE TABLE it_async (id UInt64) ENGINE = MergeTree() ORDER BY id');
+
+        // async_insert + a synchronous wait proves the settings reach a live
+        // server and the rows are durably written before the assertion runs.
+        (new ClickHouseBatchWriter(
+            $this->client,
+            'it_async',
+            ['id'],
+            settings: ['async_insert' => 1, 'wait_for_async_insert' => 1],
+        ))->write([['id' => 1], ['id' => 2], ['id' => 3]]);
+
+        $output = $this->client->select('SELECT count() AS cnt FROM it_async', new JsonEachRow());
+        /** @var list<array{cnt: int|string}> $data */
+        $data = $output->data;
+
+        Assert::same((int) $data[0]['cnt'], 3);
+    }
+
     public function inFilterBindsParameters(): void
     {
         if (!isset($this->client)) {
