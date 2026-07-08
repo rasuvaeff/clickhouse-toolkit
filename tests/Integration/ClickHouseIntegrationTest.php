@@ -9,6 +9,7 @@ use Rasuvaeff\ClickHouseToolkit\ClickHouseClientFactory;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseConfig;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseDataReader;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseDataType;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseKeysetReader;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMutationBuilder;
 use Rasuvaeff\ClickHouseToolkit\ClickHousePartitionManager;
@@ -104,6 +105,51 @@ final class ClickHouseIntegrationTest
             return;
         }
         Assert::same($this->reader()->count(), 5);
+    }
+
+    public function keysetReaderStreamsAllRowsInKeyOrder(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+
+        $reader = new ClickHouseKeysetReader(
+            client: $this->client,
+            table: self::TABLE,
+            queryBuilder: new ClickHouseQueryBuilder(
+                allowedFields: ['id', 'status'],
+                fieldTypes: ['id' => 'UInt64'],
+            ),
+            mapper: static fn(array $row): int => (int) $row['id'],
+            keyColumns: ['id' => 'UInt64'],
+            columns: ['id'],
+            pageSize: 2,
+        );
+
+        Assert::same(iterator_to_array($reader->stream(), false), [1, 2, 3, 4, 5]);
+    }
+
+    public function keysetReaderHonoursBaseFilter(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+
+        $reader = new ClickHouseKeysetReader(
+            client: $this->client,
+            table: self::TABLE,
+            queryBuilder: new ClickHouseQueryBuilder(
+                allowedFields: ['id', 'status'],
+                fieldTypes: ['id' => 'UInt64'],
+            ),
+            mapper: static fn(array $row): int => (int) $row['id'],
+            keyColumns: ['id' => 'UInt64'],
+            columns: ['id'],
+            pageSize: 2,
+            filter: new Equals('status', 'active'),
+        );
+
+        Assert::same(iterator_to_array($reader->stream(), false), [1, 2, 4]);
     }
 
     public function batchWriterAppliesAsyncInsertSettings(): void
