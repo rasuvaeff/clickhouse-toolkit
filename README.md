@@ -8,6 +8,8 @@
 [![PHP](https://img.shields.io/packagist/dependency-v/rasuvaeff/clickhouse-toolkit/php)](https://packagist.org/packages/rasuvaeff/clickhouse-toolkit)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE.md)
 
+[Русская версия](README.ru.md)
+
 Lightweight, framework-agnostic ClickHouse helpers for PHP applications.
 
 ```php
