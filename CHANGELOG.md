@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0 — 2026-07-25
+
+- Ship an AI agent skill (`resources/skills/rasuvaeff-clickhouse-toolkit/SKILL.md` +
+  `extra.skills` in composer.json): projects using the `llm/skills` Composer
+  plugin get the skill synced into `.agents/skills/` automatically on install.
+- Bump `rasuvaeff/property-testing` dev dependency to `^2.6`.
+- Make property-test generator methods `public static` (private ones are removed
+  by rector's `RemoveUnusedPrivateMethodRector` — they are only called via reflection).
+
 ## 1.4.0 — 2026-07-08
 
 - Added `ClickHouseKeysetReader` — bounded-memory streaming of large result sets via keyset (seek) pagination (`WHERE key > last ORDER BY key LIMIT pageSize`), yielding rows through a generator. Supports composite keys (tuple comparison), a base filter AND-combined with the boundary, and preserves the query builder's mandatory filter and allow-list on every page.

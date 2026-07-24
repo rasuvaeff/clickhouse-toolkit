@@ -46,7 +46,7 @@
         "guzzlehttp/guzzle": "^7.9",
         "infection/infection": "^0.33",
         "maglnet/composer-require-checker": "^4.17",
-        "rasuvaeff/property-testing": "^1.0",
+        "rasuvaeff/property-testing": "^2.6",
         "rector/rector": "^2.4",
         "roave/backward-compatibility-check": "^8.0",
         "testo/bench": "^0.1.5",
@@ -79,6 +79,11 @@
             "ext-intl": "1.0.0"
         },
         "sort-packages": true
+    },
+    "extra": {
+        "skills": {
+            "source": "resources/skills"
+        }
     },
     "scripts": {
         "bc-check": "roave-backward-compatibility-check",
