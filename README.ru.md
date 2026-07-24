@@ -35,6 +35,9 @@ $sql = $qb->buildSelect(table: 'events', where: $where->sql, limit: 20);
 > **Используете AI-ассистента?** [`llms.txt`](llms.txt) — компактный,
 > самодостаточный справочник по всему публичному API плюс готовые рецепты —
 > можно закинуть прямо в контекст модели. Контрибьюторам: см. [`AGENTS.md`](AGENTS.md).
+> Проекты с Composer-плагином [llm/skills](https://github.com/roxblnfk/skills)
+> дополнительно получают agent-скилл этого пакета в `.agents/skills/`
+> автоматически при установке.
 
 ## Оглавление
 

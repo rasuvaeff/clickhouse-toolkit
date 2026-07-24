@@ -384,7 +384,7 @@ final class ClickHouseSqlFilterVisitorTest
     }
 
     /** @return array<string, ArbitraryInterface> */
-    private function equalsAlwaysBindsValueAsParameterGenerators(): array
+    public static function equalsAlwaysBindsValueAsParameterGenerators(): array
     {
         return ['value' => Gen::stringAscii()];
     }
@@ -401,7 +401,7 @@ final class ClickHouseSqlFilterVisitorTest
     }
 
     /** @return array<string, ArbitraryInterface> */
-    private function betweenAlwaysBindsExactlyTwoParametersGenerators(): array
+    public static function betweenAlwaysBindsExactlyTwoParametersGenerators(): array
     {
         return [
             'min' => Gen::int(),
@@ -421,7 +421,7 @@ final class ClickHouseSqlFilterVisitorTest
     }
 
     /** @return array<string, ArbitraryInterface> */
-    private function inBindsOneParameterPerValueGenerators(): array
+    public static function inBindsOneParameterPerValueGenerators(): array
     {
         return ['values' => Gen::nonEmptyArrayOf(Gen::intBetween(-1_000, 1_000))];
     }
