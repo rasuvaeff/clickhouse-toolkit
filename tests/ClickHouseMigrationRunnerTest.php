@@ -118,6 +118,65 @@ final class ClickHouseMigrationRunnerTest
         }
     }
 
+    public function substitutesPlaceholdersBeforeExecuting(): void
+    {
+        $dir = $this->makeTempDir();
+        file_put_contents($dir . '/001_create.sql', 'CREATE TABLE IF NOT EXISTS {{events_table}} (id UInt64) ENGINE = MergeTree ORDER BY id');
+
+        $queries = [];
+        $client = $this->queryCapturingClient($queries);
+
+        (new ClickHouseMigrationRunner($client, $dir, placeholders: ['events_table' => 'custom_events']))->run();
+
+        Assert::true(in_array(
+            'CREATE TABLE IF NOT EXISTS custom_events (id UInt64) ENGINE = MergeTree ORDER BY id',
+            $queries,
+            true,
+        ));
+    }
+
+    public function checksumCoversTheResolvedSqlNotTheRawFile(): void
+    {
+        // this is what keeps an installation on default values from seeing a
+        // divergence when a package switches its shipped DDL to placeholders:
+        // the resolved text is byte-identical to the file it applied
+        $dir = $this->makeTempDir();
+        file_put_contents($dir . '/001_create.sql', 'CREATE TABLE {{events_table}} (id UInt64)');
+
+        $inserts = [];
+        $client = (new FakeClickHouseClient())
+            ->withSelectCallback(fn() => $this->chOutput(''))
+            ->withInsertCallback(
+                static function (string $table, array $values) use (&$inserts): void {
+                    $inserts[] = $values;
+                },
+            );
+
+        (new ClickHouseMigrationRunner($client, $dir, placeholders: ['events_table' => 'demo']))->run();
+
+        Assert::same($inserts[0][0]['checksum'], sha1('CREATE TABLE demo (id UInt64)'));
+    }
+
+    public function throwsOnAnUnresolvedPlaceholder(): void
+    {
+        // a typo in the key must name the file and the token, not ship
+        // "{{events_table}}" to ClickHouse and fail as a parse error there
+        $dir = $this->makeTempDir();
+        file_put_contents($dir . '/001_create.sql', 'CREATE TABLE {{events_table}} (id UInt64)');
+
+        $queries = [];
+        $caught = null;
+
+        try {
+            (new ClickHouseMigrationRunner($this->queryCapturingClient($queries), $dir, placeholders: ['wrong_key' => 'demo']))->run();
+        } catch (ClickHouseMigrationException $caught) {
+        }
+
+        Assert::notNull($caught);
+        Assert::string($caught->getMessage())->contains('001_create.sql');
+        Assert::string($caught->getMessage())->contains('{{events_table}}');
+    }
+
     public function recordsAppliedMigrationViaInsert(): void
     {
         $inserts = [];

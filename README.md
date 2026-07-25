@@ -471,6 +471,7 @@ Applies `*.sql` files from a directory in filename order, recording each applied
 - **Tamper-evident** — if an already-applied file's contents changed, a `ClickHouseMigrationException` is thrown instead of silently diverging.
 - **One statement per file** — contents are sent as a single query (no naive `;` splitting).
 - **Optional PSR-3 logging** — pass a `LoggerInterface` to log applied/skipped files.
+- **Parameterisable** — `{{key}}` tokens are replaced from `$placeholders` before the file is hashed and executed, so a package can ship DDL whose table names the application configures. An unresolved token is an error, not a query sent to the server.
 
 ```php
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
@@ -479,10 +480,25 @@ $runner = new ClickHouseMigrationRunner(
     client: $client,
     migrationsPath: __DIR__ . '/migrations',
     logger: $logger, // optional PSR-3
+    placeholders: ['events_table' => 'my_events'], // optional; replaces {{events_table}}
 );
 
 $applied = $runner->run(); // list<string> of files applied this call
 ```
+
+The checksum covers the **resolved** SQL, not the raw file. Two consequences,
+both deliberate:
+
+- switching a shipped migration from a literal name to `{{placeholder}}` is
+  invisible to installations using the default value — the resolved text is
+  byte-identical to what they applied;
+- changing a value *after* a migration has been applied is reported as a
+  divergence instead of quietly creating a second table. Create the new table
+  yourself, or drop the `_migrations` row, then re-run.
+
+Placeholder values are interpolated verbatim into DDL. They come from your
+configuration, not from user input — validate them with `Identifier::assertPlain()`
+if they can ever originate elsewhere.
 
 Tracking table (created automatically):
 

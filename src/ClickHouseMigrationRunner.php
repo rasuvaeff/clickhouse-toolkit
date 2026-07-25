@@ -16,6 +16,11 @@ use SimPod\ClickHouseClient\Format\JsonEachRow;
  * - Idempotent: already-applied files are skipped.
  * - Tamper-evident: if an already-applied file's contents changed, a
  *   {@see ClickHouseMigrationException} is thrown instead of silently diverging.
+ * - Parameterisable: `{{key}}` tokens are replaced from `$placeholders` before
+ *   the file is hashed and executed, so a package can ship DDL whose table
+ *   names the application configures. Hashing the resolved SQL (not the raw
+ *   file) is what keeps existing installations on default values byte-identical
+ *   to what they applied.
  * - One statement per file (the contents are sent as a single query).
  *
  * Concurrency & failure: ClickHouse has no transactions, and this runner uses
@@ -37,10 +42,17 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
 
     private LoggerInterface $logger;
 
+    /**
+     * @param array<string, string> $placeholders `{{key}}` tokens replaced in every
+     *                                            migration file before it is hashed
+     *                                            and executed — typically table names
+     *                                            that the application configures
+     */
     public function __construct(
         private ClickHouseClient $client,
         private string $migrationsPath,
         ?LoggerInterface $logger = null,
+        private array $placeholders = [],
     ) {
         $this->logger = $logger ?? new NullLogger();
     }
@@ -70,6 +82,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
                 continue;
             }
 
+            $sql = $this->resolve(name: $name, sql: $sql);
             $checksum = sha1(string: $sql);
 
             if (isset($applied[$name])) {
@@ -126,7 +139,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
         foreach ($this->getMigrationFiles() as $file) {
             $name = basename($file);
             $sql = file_get_contents($file);
-            $checksum = $sql === false ? null : sha1($sql);
+            $checksum = $sql === false ? null : sha1($this->resolve(name: $name, sql: $sql));
 
             $record = $records[$name] ?? null;
 
@@ -262,6 +275,37 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
         }
 
         return $map;
+    }
+
+    /**
+     * @return list<string>
+     */
+    /**
+     * Substitutes `{{key}}` tokens, then rejects anything left unresolved.
+     *
+     * The result — not the raw file — is what gets hashed, so an installation
+     * using the default values keeps the checksum it was applied with. The
+     * flip side is deliberate: changing a value after a migration has been
+     * applied surfaces as a divergence rather than silently creating a second
+     * table.
+     *
+     * @throws ClickHouseMigrationException when a `{{…}}` token has no value
+     */
+    private function resolve(string $name, string $sql): string
+    {
+        foreach ($this->placeholders as $key => $value) {
+            $sql = str_replace('{{' . $key . '}}', $value, $sql);
+        }
+
+        if (preg_match('/\{\{\s*([^}\s]+)\s*}}/', $sql, $matches) === 1) {
+            throw new ClickHouseMigrationException(sprintf(
+                'ClickHouse migration "%s" has an unresolved placeholder "{{%s}}" — no such key was passed to the runner.',
+                $name,
+                $matches[1],
+            ));
+        }
+
+        return $sql;
     }
 
     /**
