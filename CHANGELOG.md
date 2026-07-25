@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.6.0 — 2026-07-25
+
+- `ClickHouseMigrationRunner` accepts `$placeholders`: `{{key}}` tokens in a
+  migration file are replaced before the file is hashed and executed, so a
+  package can ship DDL whose table names the application configures instead of
+  hard-coding them. An unresolved `{{…}}` throws a `ClickHouseMigrationException`
+  naming the file and the token, rather than sending it to the server.
+- The checksum covers the **resolved** SQL, not the raw file. That is what makes
+  the feature safe to adopt: a package switching its shipped DDL from a literal
+  name to a placeholder is invisible to installations on the default value —
+  their resolved text is byte-identical to what they applied. Changing a value
+  after a migration has been applied is still reported as a divergence.
+- `status()` resolves placeholders identically to `run()`, so the two cannot
+  disagree about whether a file has diverged.
+
 ## 1.5.1 — 2026-07-25
 
 - Reject trailing newlines in validated values: `Identifier` now anchors patterns
