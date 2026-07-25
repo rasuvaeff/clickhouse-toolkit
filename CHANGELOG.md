@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1 — 2026-07-25
+
+- Reject trailing newlines in validated values: `Identifier` now anchors patterns
+  with `\z` instead of `$` (PCRE `$` matches before a trailing `\n`, which let
+  `"<identifier>\n"` slip through identifier/type validation).
+
 ## 1.5.0 — 2026-07-25
 
 - Ship an AI agent skill (`resources/skills/rasuvaeff-clickhouse-toolkit/SKILL.md` +

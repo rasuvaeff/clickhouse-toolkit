@@ -60,6 +60,7 @@ final class IdentifierTest
         yield 'star' => ['*'];
         yield 'quoted' => ['`events`'];
         yield 'bracket' => ['events]'];
+        yield 'trailing newline' => ["events\n"];
     }
 
     #[DataProvider('validPlainIdentifiers')]
@@ -98,6 +99,7 @@ final class IdentifierTest
         yield 'space' => ['my col'];
         yield 'starts with digit' => ['1col'];
         yield 'expression' => ['now()'];
+        yield 'trailing newline' => ["events\n"];
     }
 
     #[DataProvider('validTypes')]
@@ -139,5 +141,6 @@ final class IdentifierTest
         yield 'single quote' => ["String'"];
         yield 'backslash' => ['String\\'];
         yield 'semicolon' => ['String; DROP'];
+        yield 'trailing newline' => ["String\n"];
     }
 }
