@@ -6,6 +6,9 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
 use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\Identifier;
+use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Gen;
+use Rasuvaeff\PropertyTesting\Property;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Data\DataProvider;
@@ -142,5 +145,92 @@ final class IdentifierTest
         yield 'backslash' => ['String\\'];
         yield 'semicolon' => ['String; DROP'];
         yield 'trailing newline' => ["String\n"];
+    }
+
+    #[Property(runs: 500)]
+    public function acceptsExactlyValidIdentifiers(string $name): void
+    {
+        $valid = (bool) preg_match('/^[A-Za-z_]\w*(\.[A-Za-z_]\w*)?\z/', $name);
+
+        try {
+            Identifier::assert(identifier: $name);
+            Assert::true($valid);
+        } catch (InvalidArgumentException) {
+            Assert::false($valid);
+        }
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    public static function acceptsExactlyValidIdentifiersGenerators(): array
+    {
+        return ['name' => Gen::stringFrom(alphabet: 'abcABC012_.', minLength: 0, maxLength: 40)];
+    }
+
+    /**
+     * @return iterable<array{string}>
+     */
+    public static function acceptsExactlyValidIdentifiersExamples(): iterable
+    {
+        foreach ([...self::validIdentifiers(), ...self::invalidIdentifiers()] as $case) {
+            yield $case;
+        }
+    }
+
+    #[Property(runs: 500)]
+    public function acceptsExactlyValidPlainIdentifiers(string $name): void
+    {
+        $valid = (bool) preg_match('/^[A-Za-z_]\w*\z/', $name);
+
+        try {
+            Identifier::assertPlain(identifier: $name);
+            Assert::true($valid);
+        } catch (InvalidArgumentException) {
+            Assert::false($valid);
+        }
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    public static function acceptsExactlyValidPlainIdentifiersGenerators(): array
+    {
+        return ['name' => Gen::stringFrom(alphabet: 'abcABC012_.', minLength: 0, maxLength: 40)];
+    }
+
+    /**
+     * @return iterable<array{string}>
+     */
+    public static function acceptsExactlyValidPlainIdentifiersExamples(): iterable
+    {
+        foreach ([...self::validPlainIdentifiers(), ...self::invalidPlainIdentifiers()] as $case) {
+            yield $case;
+        }
+    }
+
+    #[Property(runs: 500)]
+    public function acceptsExactlyValidTypes(string $type): void
+    {
+        $valid = (bool) preg_match('/^[A-Za-z0-9_(), ]+\z/', $type);
+
+        try {
+            Identifier::assertType(type: $type);
+            Assert::true($valid);
+        } catch (InvalidArgumentException) {
+            Assert::false($valid);
+        }
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    public static function acceptsExactlyValidTypesGenerators(): array
+    {
+        return ['type' => Gen::stringFrom(alphabet: 'AaBbCc019_(), ', minLength: 0, maxLength: 40)];
+    }
+
+    /**
+     * @return iterable<array{string}>
+     */
+    public static function acceptsExactlyValidTypesExamples(): iterable
+    {
+        foreach ([...self::validTypes(), ...self::invalidTypes()] as $case) {
+            yield $case;
+        }
     }
 }
