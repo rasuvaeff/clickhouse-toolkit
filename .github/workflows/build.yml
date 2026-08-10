@@ -212,8 +212,24 @@ jobs:
           echo "ClickHouse did not become ready in time" >&2
           exit 1
 
+      - name: Restore property regression corpus
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build/property-db
+          key: property-db-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: property-db-
+
       - name: Test with coverage
+        env:
+          PROPERTY_DB: ${{ github.workspace }}/build/property-db
         run: composer test:coverage:ci
+
+      - name: Save property regression corpus
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: build/property-db
+          key: property-db-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Mutation testing
         run: composer mutation
