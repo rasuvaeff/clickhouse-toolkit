@@ -88,9 +88,7 @@ final class ClickHouseClientFactoryTest
         $calls->uriFactory = false;
         $inner = new \GuzzleHttp\Psr7\HttpFactory();
         $httpClient = (new FakePsrHttpClient())->withSendRequestCallback(
-            static function () {
-                return new Response(200, [], 'Ok.');
-            },
+            static fn() => new Response(200, [], 'Ok.'),
         );
 
         $requestFactory = new readonly class ($calls, $inner) implements \Psr\Http\Message\RequestFactoryInterface {

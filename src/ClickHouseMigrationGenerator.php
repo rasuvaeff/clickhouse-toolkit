@@ -56,7 +56,7 @@ final readonly class ClickHouseMigrationGenerator
             throw new \RuntimeException(sprintf('Migration file "%s" already exists.', $filename));
         }
 
-        if (!is_dir($this->migrationsPath) && !@mkdir($this->migrationsPath, 0o777, true) && !is_dir($this->migrationsPath)) {
+        if (!is_dir($this->migrationsPath) && !@mkdir($this->migrationsPath, 0o777, recursive: true) && !is_dir($this->migrationsPath)) {
             throw new \RuntimeException(sprintf('Cannot create migrations directory "%s".', $this->migrationsPath));
         }
 

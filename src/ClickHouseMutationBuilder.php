@@ -96,14 +96,14 @@ final readonly class ClickHouseMutationBuilder
      */
     public function waitForMutations(string $table, float $timeout = 30.0): bool
     {
-        $deadline = microtime(true) + $timeout;
+        $deadline = microtime(as_float: true) + $timeout;
 
         while (true) {
             $pending = array_filter($this->getMutations($table), static fn(array $m): bool => !$m['is_done']);
             if ($pending === []) {
                 return true;
             }
-            if (microtime(true) >= $deadline) {
+            if (microtime(as_float: true) >= $deadline) {
                 return false;
             }
 

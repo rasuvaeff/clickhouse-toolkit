@@ -112,7 +112,7 @@ final class ClickHouseMigrationGeneratorTest
 
     public function createsMigrationsDirectoryIfMissing(): void
     {
-        $dir = sys_get_temp_dir() . '/chmig_' . uniqid('', true) . '/nested';
+        $dir = sys_get_temp_dir() . '/chmig_' . uniqid('', more_entropy: true) . '/nested';
         $this->tempDirs[] = dirname($dir);
 
         $path = (new ClickHouseMigrationGenerator($dir))->generate('first');
@@ -164,7 +164,7 @@ final class ClickHouseMigrationGeneratorTest
 
     private function makeTempDir(): string
     {
-        $dir = sys_get_temp_dir() . '/chgen_' . uniqid('', true);
+        $dir = sys_get_temp_dir() . '/chgen_' . uniqid('', more_entropy: true);
         mkdir($dir);
         $this->tempDirs[] = $dir;
 

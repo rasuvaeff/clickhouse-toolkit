@@ -120,7 +120,7 @@ final class ClickHouseQueryBuilderTest
 
     public function boolValueIsNormalizedToInt(): void
     {
-        $clause = $this->builder->buildWhere(new Equals('is_active', true));
+        $clause = $this->builder->buildWhere(new Equals('is_active', value: true));
 
         Assert::same($clause->params, ['p0' => 1]);
     }

@@ -126,7 +126,7 @@ final class ClickHouseIntegrationTest
             pageSize: 2,
         );
 
-        Assert::same(iterator_to_array($reader->stream(), false), [1, 2, 3, 4, 5]);
+        Assert::same(iterator_to_array($reader->stream(), preserve_keys: false), [1, 2, 3, 4, 5]);
     }
 
     public function keysetReaderHonoursBaseFilter(): void
@@ -149,7 +149,7 @@ final class ClickHouseIntegrationTest
             filter: new Equals('status', 'active'),
         );
 
-        Assert::same(iterator_to_array($reader->stream(), false), [1, 2, 4]);
+        Assert::same(iterator_to_array($reader->stream(), preserve_keys: false), [1, 2, 4]);
     }
 
     public function batchWriterAppliesAsyncInsertSettings(): void
@@ -389,7 +389,7 @@ final class ClickHouseIntegrationTest
         $pid = getmypid();
         $dir = sys_get_temp_dir() . '/ch_it_migrations_' . ($pid === false ? '0' : (string) $pid);
         if (!is_dir($dir)) {
-            mkdir($dir, 0o777, true);
+            mkdir($dir, 0o777, recursive: true);
         }
         file_put_contents(
             $dir . '/001_create_it_migr.sql',

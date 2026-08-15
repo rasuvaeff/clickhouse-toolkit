@@ -114,7 +114,7 @@ final class ClickHouseMigrationRunnerTest
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
         foreach (['001_create_demo.sql', '002_add_name.sql'] as $name) {
-            Assert::true(in_array((string) file_get_contents(self::MIGRATIONS_DIR . '/' . $name), $queries, true));
+            Assert::true(in_array((string) file_get_contents(self::MIGRATIONS_DIR . '/' . $name), $queries, strict: true));
         }
     }
 
@@ -131,7 +131,7 @@ final class ClickHouseMigrationRunnerTest
         Assert::true(in_array(
             'CREATE TABLE IF NOT EXISTS custom_events (id UInt64) ENGINE = MergeTree ORDER BY id',
             $queries,
-            true,
+            strict: true,
         ));
     }
 
@@ -480,7 +480,7 @@ final class ClickHouseMigrationRunnerTest
 
     private function makeTempDir(): string
     {
-        $dir = sys_get_temp_dir() . '/chmig_' . uniqid('', true);
+        $dir = sys_get_temp_dir() . '/chmig_' . uniqid('', more_entropy: true);
         mkdir($dir);
         $this->tempDirs[] = $dir;
 

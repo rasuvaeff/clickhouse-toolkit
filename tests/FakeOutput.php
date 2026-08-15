@@ -10,7 +10,7 @@ use SimPod\ClickHouseClient\Output\Output;
  * @internal
  * @implements Output<never>
  */
-final class FakeOutput implements Output
+final readonly class FakeOutput implements Output
 {
     public function __construct(string $contents = '') {}
 

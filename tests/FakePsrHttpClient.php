@@ -14,7 +14,6 @@ use Psr\Http\Message\ResponseInterface;
  */
 final class FakePsrHttpClient implements ClientInterface
 {
-    /** @var Closure|null */
     private ?Closure $sendRequestCallback = null;
 
     public function withSendRequestCallback(?Closure $callback): self

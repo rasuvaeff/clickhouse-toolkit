@@ -23,7 +23,7 @@ final class IdentifierTest
     public function assertAcceptsValid(string $identifier): void
     {
         Identifier::assert(identifier: $identifier);
-        Assert::true(true);
+        Assert::true(actual: true);
     }
 
     #[DataProvider('invalidIdentifiers')]
@@ -70,7 +70,7 @@ final class IdentifierTest
     public function assertPlainAcceptsValid(string $identifier): void
     {
         Identifier::assertPlain(identifier: $identifier);
-        Assert::true(true);
+        Assert::true(actual: true);
     }
 
     #[DataProvider('invalidPlainIdentifiers')]
@@ -109,7 +109,7 @@ final class IdentifierTest
     public function assertTypeAcceptsValid(string $type): void
     {
         Identifier::assertType(type: $type);
-        Assert::true(true);
+        Assert::true(actual: true);
     }
 
     #[DataProvider('invalidTypes')]
