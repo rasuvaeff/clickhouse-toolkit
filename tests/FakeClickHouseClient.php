@@ -16,25 +16,18 @@ use SimPod\ClickHouseClient\Schema\Table;
  */
 final class FakeClickHouseClient implements ClickHouseClient
 {
-    /** @var Closure|null */
     private ?Closure $executeQueryCallback = null;
 
-    /** @var Closure|null */
     private ?Closure $executeQueryWithParamsCallback = null;
 
-    /** @var Closure|null */
     private ?Closure $selectCallback = null;
 
-    /** @var Closure|null */
     private ?Closure $selectWithParamsCallback = null;
 
-    /** @var Closure|null */
     private ?Closure $insertCallback = null;
 
-    /** @var Closure|null */
     private ?Closure $insertWithFormatCallback = null;
 
-    /** @var Closure|null */
     private ?Closure $insertPayloadCallback = null;
 
     public function withExecuteQueryCallback(?Closure $callback): self

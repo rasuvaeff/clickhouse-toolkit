@@ -20,6 +20,7 @@ jobs:
 
     outputs:
       run: ${{ steps.filter.outputs.run }}
+      mutation: ${{ steps.filter.outputs.mutation }}
 
     steps:
       - name: Checkout
@@ -38,7 +39,11 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ]; then
             BASE="$BASE_SHA"
           elif [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            # First push to a new branch: there is no base to diff against, so
+            # every filter says yes. Both outputs must be set here — an unset
+            # one reads as false downstream and silently skips its job.
             echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "mutation=true" >> "$GITHUB_OUTPUT"
             exit 0
           else
             BASE="$BEFORE_SHA"
@@ -51,6 +56,20 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Mutation is by far the most expensive job, so it gets a narrower
+          # filter than the rest: only what can change which mutants exist or
+          # which tests kill them. Style and static-analysis configs, examples
+          # and this workflow cannot. Explicit trade: editing the mutation STEP
+          # here no longer re-runs it — a break surfaces on the next source
+          # change or a manual re-run, which beats paying the full mutation run
+          # on every docs and CI edit.
+          if git diff --quiet "$BASE" "$GITHUB_SHA" -- \
+            src tests composer.json testo.php infection.json5; then
+            echo "mutation=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "mutation=true" >> "$GITHUB_OUTPUT"
           fi
 
   build:
@@ -157,7 +176,7 @@ jobs:
   coverage:
     name: Coverage & Mutation
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.run == 'true') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.mutation == 'true') }}
     runs-on: ubuntu-latest
 
     services:

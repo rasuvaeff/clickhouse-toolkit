@@ -149,7 +149,7 @@ final class ClickHouseMigrationsStatusCommandTest
 
     private function makeTempDirWithTwoMigrations(): string
     {
-        $dir = sys_get_temp_dir() . '/chcmdstat_' . uniqid('', true);
+        $dir = sys_get_temp_dir() . '/chcmdstat_' . uniqid('', more_entropy: true);
         mkdir($dir);
         $this->tempDirs[] = $dir;
         file_put_contents($dir . '/001_a.sql', 'CREATE TABLE a (x UInt8) ENGINE = Memory');

@@ -55,7 +55,7 @@ final class ClickHouseMigrationsGenerateCommandTest
 
     public function returnsFailureWhenGeneratorThrowsRuntimeException(): void
     {
-        $file = sys_get_temp_dir() . '/chcmd_block_' . uniqid('', true);
+        $file = sys_get_temp_dir() . '/chcmd_block_' . uniqid('', more_entropy: true);
         file_put_contents($file, 'blocker');
         $this->tempDirs[] = $file;
 
@@ -103,7 +103,7 @@ final class ClickHouseMigrationsGenerateCommandTest
 
     private function makeTempDir(): string
     {
-        $dir = sys_get_temp_dir() . '/chcmd_' . uniqid('', true);
+        $dir = sys_get_temp_dir() . '/chcmd_' . uniqid('', more_entropy: true);
         mkdir($dir);
         $this->tempDirs[] = $dir;
 

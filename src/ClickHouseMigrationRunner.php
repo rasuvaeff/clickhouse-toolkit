@@ -156,7 +156,6 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
             $statuses[] = new ClickHouseMigrationStatus(
                 name: $name,
                 state: ClickHouseMigrationState::Missing,
-                checksum: null,
                 appliedAt: $record['appliedAt'],
             );
         }

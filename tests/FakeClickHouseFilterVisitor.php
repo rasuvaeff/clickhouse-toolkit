@@ -25,10 +25,10 @@ use Yiisoft\Data\Reader\FilterInterface;
 /**
  * @internal
  */
-final class FakeClickHouseFilterVisitor implements ClickHouseFilterVisitor
+final readonly class FakeClickHouseFilterVisitor implements ClickHouseFilterVisitor
 {
     public function __construct(
-        private readonly array $returnValue = [],
+        private array $returnValue = [],
     ) {}
 
     #[\Override]

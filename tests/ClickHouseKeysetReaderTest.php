@@ -30,7 +30,7 @@ final class ClickHouseKeysetReaderTest
             pageSize: 2,
         );
 
-        $ids = array_map(static fn(array $row): int => (int) $row['id'], iterator_to_array($reader->stream(), false));
+        $ids = array_map(static fn(array $row): int => (int) $row['id'], iterator_to_array($reader->stream(), preserve_keys: false));
 
         Assert::same($ids, [1, 2, 3, 4, 5]);
     }
@@ -70,7 +70,7 @@ final class ClickHouseKeysetReaderTest
         $calls = [];
         $reader = $this->reader(pages: [[['id' => 1], ['id' => 2]], []], pageSize: 2, calls: $calls);
 
-        $ids = array_map(static fn(array $row): int => (int) $row['id'], iterator_to_array($reader->stream(), false));
+        $ids = array_map(static fn(array $row): int => (int) $row['id'], iterator_to_array($reader->stream(), preserve_keys: false));
 
         Assert::same($ids, [1, 2]);
         Assert::same(count($calls), 2);
@@ -153,7 +153,7 @@ final class ClickHouseKeysetReaderTest
             mapper: static fn(array $row): string => 'row-' . $row['id'],
         );
 
-        Assert::same(iterator_to_array($reader->stream(), false), ['row-1', 'row-2']);
+        Assert::same(iterator_to_array($reader->stream(), preserve_keys: false), ['row-1', 'row-2']);
     }
 
     public function rejectsEmptyKeyColumns(): void
@@ -235,9 +235,7 @@ final class ClickHouseKeysetReaderTest
      * @param list<list<array<string, mixed>>> $pages
      * @param array<string, string> $keyColumns
      * @param list<string> $columns
-     * @param \Closure|null $mapper
      * @param list<array{sql: string, params: array<string, mixed>}> $calls
-     *
      * @return ClickHouseKeysetReader<mixed>
      */
     private function reader(
