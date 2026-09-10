@@ -47,18 +47,12 @@ final class ClickHouseMigrationsRunCommandTest
     {
         $dir = $this->makeTempDirWithTwoMigrations();
 
-        $rows = [];
+        $records = [];
         foreach (['001_a.sql', '002_b.sql'] as $name) {
-            $checksum = sha1((string) file_get_contents($dir . '/' . $name));
-            $rows[] = sprintf('{"name":"%s","current_checksum":"%s","variants":1}', $name, $checksum);
+            $records[$name] = sha1((string) file_get_contents($dir . '/' . $name));
         }
 
-        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn() => new JsonEachRow(implode("\n", $rows)));
-        $runner = new ClickHouseMigrationRunner($client, $dir);
-        $command = new ClickHouseMigrationsRunCommand($runner);
-        $command->setApplication(new \Symfony\Component\Console\Application());
-        $tester = new CommandTester($command);
+        $tester = $this->testerWithRecords($dir, $records);
 
         $exitCode = $tester->execute([]);
 
