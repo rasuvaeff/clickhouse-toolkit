@@ -94,10 +94,13 @@ docker rm -f ch-test
   `withMandatoryFilter()` (always applied, AND-combined, bypasses the allow-list),
   never via the user filter. `ClickHouseRawFilter` emits raw SQL (trusted; values
   via `{name:Type}` params that must not clash with the `pN` keys).
-- Migration runner: `_migrations` is `ReplacingMergeTree(applied_at) ORDER BY
-  name` with microsecond `DateTime64(6)`; reads via `argMax` + `uniqExact`
-  conflict detection. Tamper-evident (checksum mismatch → exception). One SQL
-  statement per file; no naive `;` splitting.
+- Migration runner: the bookkeeping table (`_migrations` by default, renamed
+  via `$migrationsTable`) is `ReplacingMergeTree(applied_at) ORDER BY name` with
+  microsecond `DateTime64(6)`; reads via `argMax` + `uniqExact` conflict
+  detection. The name is interpolated into SQL, so the constructor puts it
+  through `Identifier::assertPlain()` — a `db.table` form is refused, since the
+  backticks wrap the whole string. Tamper-evident (checksum mismatch →
+  exception). One SQL statement per file; no naive `;` splitting.
 
 ## When you finish
 

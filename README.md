@@ -465,13 +465,14 @@ $mb->killMutation('events', $mutationId);
 
 ### `ClickHouseMigrationRunner`
 
-Applies `*.sql` files from a directory in filename order, recording each applied file with a **content checksum** in a `_migrations` table.
+Applies `*.sql` files from a directory in filename order, recording each applied file with a **content checksum** in a bookkeeping table (`_migrations` by default).
 
 - **Idempotent** — already-applied files are skipped.
 - **Tamper-evident** — if an already-applied file's contents changed, a `ClickHouseMigrationException` is thrown instead of silently diverging.
 - **One statement per file** — contents are sent as a single query (no naive `;` splitting).
 - **Optional PSR-3 logging** — pass a `LoggerInterface` to log applied/skipped files.
 - **Parameterisable** — `{{key}}` tokens are replaced from `$placeholders` before the file is hashed and executed, so a package can ship DDL whose table names the application configures. An unresolved token is an error, not a query sent to the server.
+- **Relocatable bookkeeping** — `$migrationsTable` renames the tracking table itself.
 
 ```php
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
@@ -481,10 +482,31 @@ $runner = new ClickHouseMigrationRunner(
     migrationsPath: __DIR__ . '/migrations',
     logger: $logger, // optional PSR-3
     placeholders: ['events_table' => 'my_events'], // optional; replaces {{events_table}}
+    migrationsTable: '_migrations', // optional; the bookkeeping table
 );
 
 $applied = $runner->run(); // list<string> of files applied this call
 ```
+
+#### Choosing the bookkeeping table
+
+Two situations need a name other than the default:
+
+- **Adopting the runner where `_migrations` already exists** with a different
+  schema — a home-grown `(name, applied_at)` table, say. The runner's own
+  `CREATE TABLE IF NOT EXISTS` finds the table and does nothing, then the first
+  read fails on the missing `checksum` column. That happens *before* any
+  migration file is read, so the repair cannot ship as a migration. Point the
+  runner at a fresh name instead, let it re-apply the (idempotent) migrations,
+  and drop the old table whenever convenient.
+- **Two applications sharing one ClickHouse database** — give each its own
+  bookkeeping table.
+
+The name is interpolated into SQL, not bound, so it must be a plain identifier
+(`/^[A-Za-z_]\w*\z/`); anything else throws an `InvalidArgumentException` from
+the constructor. A db-qualified `analytics._migrations` is refused as well: the
+backticks wrap the whole string, so it would name one table containing a dot.
+Select the database on the client instead.
 
 The checksum covers the **resolved** SQL, not the raw file. Two consequences,
 both deliberate:
@@ -494,13 +516,13 @@ both deliberate:
   byte-identical to what they applied;
 - changing a value *after* a migration has been applied is reported as a
   divergence instead of quietly creating a second table. Create the new table
-  yourself, or drop the `_migrations` row, then re-run.
+  yourself, or drop the bookkeeping row, then re-run.
 
 Placeholder values are interpolated verbatim into DDL. They come from your
 configuration, not from user input — validate them with `Identifier::assertPlain()`
 if they can ever originate elsewhere.
 
-Tracking table (created automatically):
+Tracking table (created automatically, named by `$migrationsTable`):
 
 ```sql
 CREATE TABLE IF NOT EXISTS `_migrations` (
@@ -510,14 +532,14 @@ CREATE TABLE IF NOT EXISTS `_migrations` (
 
 Name files so lexicographic order equals execution order, e.g. `001_create_events.sql`, `002_add_index.sql`.
 
-> **Concurrency & partial failure.** ClickHouse has no transactions and the runner uses no distributed lock: the applied-list is read, then each file is executed and recorded separately. Two runners started at once may both run the same pending file, and if a file's DDL succeeds but the `_migrations` insert does not, the next run repeats it. Run migrations from a single deploy step, prefer idempotent DDL (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`), and wrap `run()` in an external lock if you need stronger guarantees.
+> **Concurrency & partial failure.** ClickHouse has no transactions and the runner uses no distributed lock: the applied-list is read, then each file is executed and recorded separately. Two runners started at once may both run the same pending file, and if a file's DDL succeeds but the bookkeeping insert does not, the next run repeats it. Run migrations from a single deploy step, prefer idempotent DDL (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`), and wrap `run()` in an external lock if you need stronger guarantees.
 
 ### `ClickHouseMigrationGenerator` & `status()`
 
 Two helpers that round out the migration workflow:
 
 - **`ClickHouseMigrationGenerator`** creates a new migration file with the next sequential numeric prefix. It is a plain filesystem helper — no ClickHouse client required.
-- **`ClickHouseMigrationRunner::status()`** reports the state of every migration file relative to the `_migrations` table.
+- **`ClickHouseMigrationRunner::status()`** reports the state of every migration file relative to the bookkeeping table.
 
 ```php
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationGenerator;
@@ -547,8 +569,8 @@ foreach ($statuses as $status) {
 | State | Meaning |
 |---|---|
 | `Applied` | File exists, checksum matches the stored one. |
-| `Pending` | File exists, not recorded in `_migrations` yet. |
-| `Missing` | Recorded in `_migrations`, but the source file was removed. |
+| `Pending` | File exists, not recorded in the bookkeeping table yet. |
+| `Missing` | Recorded in the bookkeeping table, but the source file was removed. |
 | `Diverged` | File exists and was recorded, but the checksum no longer matches (or conflicting checksums were recorded). |
 
 Unlike `run()`, `status()` never throws on divergence — it surfaces the anomaly through the `Diverged` state.

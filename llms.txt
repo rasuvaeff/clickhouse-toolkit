@@ -253,6 +253,11 @@ $runner = new ClickHouseMigrationRunner($client, __DIR__.'/migrations', logger: 
 $applied = $runner->run(); // list<string> of files applied this call; idempotent
 // One SQL statement per file; files run in filename order (001_*.sql, 002_*.sql).
 // Tracks applied files + sha1 checksum in `_migrations` (ReplacingMergeTree).
+// migrationsTable: '<name>' renames that bookkeeping table — needed to adopt the
+// runner where a `_migrations` of a different schema already exists (the first
+// read fails before any migration file is read, so the repair cannot itself be a
+// migration), or to keep two applications on one database apart. Interpolated,
+// not bound: must match /^[A-Za-z_]\w*\z/, and `db.table` is refused.
 // Changed-after-apply or conflicting checksums => ClickHouseMigrationException.
 // No transactions/locks in ClickHouse: run from a single deploy step; prefer
 // idempotent DDL (CREATE TABLE IF NOT EXISTS, ALTER ... ADD COLUMN IF NOT EXISTS).
