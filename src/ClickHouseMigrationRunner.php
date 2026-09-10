@@ -11,7 +11,8 @@ use SimPod\ClickHouseClient\Format\JsonEachRow;
 
 /**
  * Applies *.sql migration files from a directory, in filename order, recording
- * applied files (with a content checksum) in a `_migrations` table.
+ * applied files (with a content checksum) in a bookkeeping table (`_migrations`
+ * by default, see `$migrationsTable`).
  *
  * - Idempotent: already-applied files are skipped.
  * - Tamper-evident: if an already-applied file's contents changed, a
@@ -24,11 +25,11 @@ use SimPod\ClickHouseClient\Format\JsonEachRow;
  * - One statement per file (the contents are sent as a single query).
  *
  * Concurrency & failure: ClickHouse has no transactions, and this runner uses
- * no distributed lock. The `_migrations` table is a ReplacingMergeTree keyed by
+ * no distributed lock. The bookkeeping table is a ReplacingMergeTree keyed by
  * name and read with argMax, so duplicate records collapse deterministically —
  * but the execution path is still not serialized, so:
  *  - two runners started at once may both execute the same pending file;
- *  - if a file's DDL succeeds but the `_migrations` insert does not, the next
+ *  - if a file's DDL succeeds but the bookkeeping insert does not, the next
  *    run re-executes that file.
  * Run migrations from a single deploy step, and prefer idempotent DDL
  * (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`). For
@@ -38,22 +39,34 @@ use SimPod\ClickHouseClient\Format\JsonEachRow;
  */
 final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRunnerInterface
 {
-    private const string MIGRATIONS_TABLE = '_migrations';
-
     private LoggerInterface $logger;
 
     /**
-     * @param array<string, string> $placeholders `{{key}}` tokens replaced in every
-     *                                            migration file before it is hashed
-     *                                            and executed — typically table names
-     *                                            that the application configures
+     * @param array<string, string> $placeholders   `{{key}}` tokens replaced in every
+     *                                              migration file before it is hashed
+     *                                              and executed — typically table names
+     *                                              that the application configures
+     * @param non-empty-string      $migrationsTable Bookkeeping table recording applied
+     *                                              migrations. Point the runner at a
+     *                                              fresh name to adopt it alongside an
+     *                                              existing table of a different schema,
+     *                                              or to keep two applications sharing
+     *                                              one database apart. Unqualified only:
+     *                                              the name is interpolated into SQL, so
+     *                                              a `db.table` form would be read as a
+     *                                              single name containing a dot.
+     *
+     * @throws \InvalidArgumentException when `$migrationsTable` is not a plain SQL identifier
      */
     public function __construct(
         private ClickHouseClient $client,
         private string $migrationsPath,
         ?LoggerInterface $logger = null,
         private array $placeholders = [],
+        private string $migrationsTable = '_migrations',
     ) {
+        Identifier::assertPlain($migrationsTable);
+
         $this->logger = $logger ?? new NullLogger();
     }
 
@@ -99,7 +112,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
 
             $this->client->executeQuery($sql);
             $this->client->insert(
-                table: self::MIGRATIONS_TABLE,
+                table: $this->migrationsTable,
                 values: [['name' => $name, 'checksum' => $checksum]],
                 columns: ['name', 'checksum'],
             );
@@ -112,7 +125,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
     }
 
     /**
-     * Reports the state of every migration file relative to the `_migrations` table.
+     * Reports the state of every migration file relative to the bookkeeping table.
      *
      * Each file on disk is classified as {@see ClickHouseMigrationState::Applied}
      * (checksum matches), {@see ClickHouseMigrationState::Pending} (not recorded)
@@ -126,7 +139,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
      *
      * @return list<ClickHouseMigrationStatus> Sorted by migration name.
      *
-     * @throws ClickHouseMigrationException if the `_migrations` table cannot be read.
+     * @throws ClickHouseMigrationException if the bookkeeping table cannot be read.
      */
     public function status(): array
     {
@@ -200,7 +213,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
         // deterministically.
         $this->client->executeQuery(sprintf(
             'CREATE TABLE IF NOT EXISTS `%s` (name %s, checksum %s, applied_at %s DEFAULT now64(6)) ENGINE = ReplacingMergeTree(applied_at) ORDER BY name',
-            self::MIGRATIONS_TABLE,
+            $this->migrationsTable,
             ClickHouseDataType::String,
             ClickHouseDataType::String,
             ClickHouseDataType::dateTime64(6),
@@ -223,7 +236,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
         $output = $this->client->select(
             sprintf(
                 'SELECT name, argMax(checksum, applied_at) AS current_checksum, uniqExact(checksum) AS variants FROM `%s` GROUP BY name',
-                self::MIGRATIONS_TABLE,
+                $this->migrationsTable,
             ),
             new JsonEachRow(),
         );
@@ -251,7 +264,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
      *
      * @return array<string, array{checksum: string, appliedAt: ?string, variants: int}>
      *
-     * @throws ClickHouseMigrationException when the `_migrations` table cannot be read.
+     * @throws ClickHouseMigrationException when the bookkeeping table cannot be read.
      */
     private function fetchAppliedRecords(): array
     {
@@ -259,7 +272,7 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
         $output = $this->client->select(
             sprintf(
                 'SELECT name, argMax(checksum, applied_at) AS current_checksum, argMax(applied_at, applied_at) AS current_applied_at, uniqExact(checksum) AS variants FROM `%s` GROUP BY name',
-                self::MIGRATIONS_TABLE,
+                $this->migrationsTable,
             ),
             new JsonEachRow(),
         );
