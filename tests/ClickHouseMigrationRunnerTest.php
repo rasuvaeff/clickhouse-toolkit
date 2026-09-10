@@ -4,13 +4,19 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
+use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationState;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationStatus;
+use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Classify;
+use Rasuvaeff\PropertyTesting\Gen;
+use Rasuvaeff\PropertyTesting\Property;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
+use SimPod\ClickHouseClient\Schema\Table;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Expect;
@@ -462,6 +468,136 @@ final class ClickHouseMigrationRunnerTest
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
         Assert::same($statuses[0]->state, ClickHouseMigrationState::Diverged);
+    }
+
+    public function recordsAppliedMigrationsInDefaultTableWhenNoneIsConfigured(): void
+    {
+        $trace = $this->bookkeepingTracingClient($queries, $selects, $inserts);
+
+        (new ClickHouseMigrationRunner($trace, self::MIGRATIONS_DIR))->run();
+
+        Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `_migrations`');
+        Assert::string($selects[0])->contains('FROM `_migrations`');
+        Assert::same($inserts, ['_migrations', '_migrations']);
+    }
+
+    public function routesEveryBookkeepingStatementToTheConfiguredTable(): void
+    {
+        $trace = $this->bookkeepingTracingClient($queries, $selects, $inserts);
+
+        $runner = new ClickHouseMigrationRunner(
+            $trace,
+            self::MIGRATIONS_DIR,
+            migrationsTable: 'app_schema_migrations',
+        );
+
+        $runner->run();
+        $runner->status();
+
+        // CREATE (run) + the two migration files + CREATE (status).
+        Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `app_schema_migrations`');
+        Assert::string($queries[3])->contains('CREATE TABLE IF NOT EXISTS `app_schema_migrations`');
+        // getApplied() for run(), fetchAppliedRecords() for status().
+        Assert::string($selects[0])->contains('FROM `app_schema_migrations`');
+        Assert::string($selects[1])->contains('FROM `app_schema_migrations`');
+        Assert::same($inserts, ['app_schema_migrations', 'app_schema_migrations']);
+        Assert::same(
+            array_filter($queries, static fn(string $sql): bool => str_contains($sql, '_migrations`')),
+            array_filter($queries, static fn(string $sql): bool => str_contains($sql, 'app_schema_migrations`')),
+        );
+    }
+
+    /**
+     * The name is interpolated into SQL rather than bound, so anything that is
+     * not a plain identifier — a `db.table` form included, since backticks wrap
+     * the whole string — must be refused before a single statement is sent.
+     */
+    #[Property(runs: 300)]
+    public function acceptsExactlyPlainIdentifiersAsTheBookkeepingTable(string $table): void
+    {
+        $valid = (bool) preg_match('/^[A-Za-z_]\w*\z/', $table);
+        // The alphabet yields ~19% accepted names (measured over 20k draws):
+        // only a `.` anywhere, or a leading digit, disqualifies one. The gates
+        // sit far enough below that a green run never trips them by chance,
+        // while still failing if a generator change stops reaching a branch.
+        Classify::cover($valid, 'accepted', 8.0);
+        Classify::cover(!$valid, 'rejected', 40.0);
+
+        $trace = $this->bookkeepingTracingClient($queries, $selects, $inserts);
+
+        try {
+            $runner = new ClickHouseMigrationRunner($trace, self::MIGRATIONS_DIR, migrationsTable: $table);
+        } catch (InvalidArgumentException) {
+            Assert::false($valid);
+            Assert::same($queries, []);
+
+            return;
+        }
+
+        Assert::true($valid);
+
+        $runner->run();
+        $runner->status();
+
+        Assert::string($queries[0])->contains(sprintf('CREATE TABLE IF NOT EXISTS `%s`', $table));
+        Assert::string($selects[0])->contains(sprintf('FROM `%s`', $table));
+        Assert::string($selects[1])->contains(sprintf('FROM `%s`', $table));
+        Assert::same($inserts, [$table, $table]);
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    public static function acceptsExactlyPlainIdentifiersAsTheBookkeepingTableGenerators(): array
+    {
+        return ['table' => Gen::stringFrom(alphabet: 'abAB01_.', minLength: 0, maxLength: 24)];
+    }
+
+    /**
+     * @return iterable<array{string}>
+     */
+    public static function acceptsExactlyPlainIdentifiersAsTheBookkeepingTableExamples(): iterable
+    {
+        yield 'the default' => ['_migrations'];
+        yield 'plain name' => ['app_migrations'];
+        yield 'db-qualified is refused' => ['analytics._migrations'];
+        yield 'empty' => [''];
+        yield 'leading digit' => ['1_migrations'];
+        yield 'statement break' => ['_migrations`; DROP TABLE users; --'];
+    }
+
+    /**
+     * Captures the three places the bookkeeping table name is interpolated:
+     * DDL and migration SQL through executeQuery(), the two bookkeeping reads
+     * through select(), and the INSERT target.
+     *
+     * @param list<string>|null $queries
+     * @param list<string>|null $selects
+     * @param list<string>|null $inserts
+     *
+     * @param-out list<string> $queries
+     * @param-out list<string> $selects
+     * @param-out list<string> $inserts
+     */
+    private function bookkeepingTracingClient(
+        ?array &$queries,
+        ?array &$selects,
+        ?array &$inserts,
+    ): FakeClickHouseClient {
+        $queries = [];
+        $selects = [];
+        $inserts = [];
+
+        return (new FakeClickHouseClient())
+            ->withExecuteQueryCallback(static function (string $sql) use (&$queries): void {
+                $queries[] = $sql;
+            })
+            ->withSelectCallback(function (string $sql) use (&$selects): Output {
+                $selects[] = $sql;
+
+                return $this->chOutput('');
+            })
+            ->withInsertCallback(static function (Table|string $table) use (&$inserts): void {
+                $inserts[] = $table instanceof Table ? $table->fullName() : $table;
+            });
     }
 
     /**

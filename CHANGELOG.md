@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.7.0 — 2026-09-10
+
+- `ClickHouseMigrationRunner` accepts `$migrationsTable`: the bookkeeping table
+  recording applied migrations is no longer hardcoded to `_migrations`. Adopting
+  the runner where a table of that name already exists with a different schema
+  used to fail inside the first read — before any migration file was read, so
+  the repair could not itself ship as a migration — and two applications sharing
+  one ClickHouse database collided on it. The name is interpolated into SQL, so
+  it is validated as a plain identifier; a db-qualified form is refused. Existing
+  installations keep `_migrations` (#29).
+
 ## 1.6.0 — 2026-07-25
 
 - `ClickHouseMigrationRunner` accepts `$placeholders`: `{{key}}` tokens in a

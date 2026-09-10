@@ -11,6 +11,7 @@ use Rasuvaeff\ClickHouseToolkit\ClickHouseDataReader;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseDataType;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseKeysetReader;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationState;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMutationBuilder;
 use Rasuvaeff\ClickHouseToolkit\ClickHousePartitionManager;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
@@ -405,6 +406,64 @@ final class ClickHouseIntegrationTest
         Assert::same($runner->run(), []);
 
         unlink($dir . '/001_create_it_migr.sql');
+        rmdir($dir);
+    }
+
+    /**
+     * The bookkeeping table name is interpolated into DDL, into both aggregate
+     * reads and into the INSERT target — positions that only a live server can
+     * confirm (`DateTime64(6)`, `now64(6)`, `argMax`/`uniqExact`, and simpod's
+     * own identifier quoting on insert).
+     */
+    public function migrationRunnerHonoursACustomBookkeepingTable(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+        $pid = getmypid();
+        $dir = sys_get_temp_dir() . '/ch_it_migrations_custom_' . ($pid === false ? '0' : (string) $pid);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0o777, recursive: true);
+        }
+        file_put_contents(
+            $dir . '/001_create_it_custom.sql',
+            'CREATE TABLE IF NOT EXISTS it_custom_demo (id UInt64) ENGINE = MergeTree() ORDER BY id',
+        );
+
+        $this->client->executeQuery('DROP TABLE IF EXISTS it_bookkeeping');
+        $this->client->executeQuery('DROP TABLE IF EXISTS _migrations');
+        $this->client->executeQuery('DROP TABLE IF EXISTS it_custom_demo');
+
+        $runner = new ClickHouseMigrationRunner(
+            $this->client,
+            $dir,
+            migrationsTable: 'it_bookkeeping',
+        );
+
+        Assert::same($runner->run(), ['001_create_it_custom.sql']);
+        Assert::same($runner->run(), []);
+
+        $statuses = $runner->status();
+        Assert::same(count($statuses), 1);
+        Assert::same($statuses[0]->state, ClickHouseMigrationState::Applied);
+
+        $recorded = $this->client->select(
+            'SELECT count() AS cnt FROM it_bookkeeping',
+            new JsonEachRow(),
+        );
+        Assert::same((int) ($recorded->data[0]['cnt'] ?? 0), 1);
+
+        // Nothing was written to the default name.
+        $leftover = $this->client->select(
+            "SELECT count() AS cnt FROM system.tables WHERE database = currentDatabase() AND name = '_migrations'",
+            new JsonEachRow(),
+        );
+        Assert::same((int) ($leftover->data[0]['cnt'] ?? 0), 0);
+
+        $this->client->executeQuery('DROP TABLE IF EXISTS it_bookkeeping');
+        $this->client->executeQuery('DROP TABLE IF EXISTS it_custom_demo');
+
+        unlink($dir . '/001_create_it_custom.sql');
         rmdir($dir);
     }
 }

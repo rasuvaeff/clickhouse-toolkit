@@ -11,6 +11,7 @@ require __DIR__ . '/_bootstrap.php';
 $runner = new ClickHouseMigrationRunner(
     client: example_client(),
     migrationsPath: __DIR__ . '/migrations',
+    // migrationsTable: 'app_migrations', // optional; defaults to '_migrations'
 );
 
 $applied = $runner->run();
