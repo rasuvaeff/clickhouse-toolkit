@@ -6,6 +6,8 @@
 >
     <projectFiles>
         <directory name="src"/>
+        <!-- Type-level regressions only; the rest of tests/ is out of scope. -->
+        <directory name="tests/Types"/>
         <ignoreFiles>
             <directory name="vendor"/>
         </ignoreFiles>

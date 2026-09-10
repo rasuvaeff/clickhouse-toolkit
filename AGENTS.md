@@ -84,6 +84,12 @@ docker rm -f ch-test
   `with*` methods, so it cannot be `readonly`).
 - `@api` on every public class/interface (psalm flags them unused otherwise).
   `#[\Override]` on interface/parent implementations.
+- Psalm's scope is `src/` **plus `tests/Types/`** — the only part of `tests/` it
+  reads. Those files never run: they are type-level regressions (a reader
+  annotated `ClickHouseDataReader<TypedRow>` whose `read()`/`readOne()` must stay
+  `TypedRow` behind a chain of `withX()`). A generic contract has no runtime
+  assertion that can protect it, so it lives in the `build` gate this way. Add to
+  them when a generic signature changes; keep the rest of `tests/` out of psalm.
 - Explicit return/param types; named arguments at call sites are the norm.
 - Comments in code: Russian is allowed (project preference); keep them only where
   non-obvious.
