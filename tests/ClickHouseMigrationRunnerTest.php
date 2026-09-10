@@ -516,8 +516,12 @@ final class ClickHouseMigrationRunnerTest
     public function acceptsExactlyPlainIdentifiersAsTheBookkeepingTable(string $table): void
     {
         $valid = (bool) preg_match('/^[A-Za-z_]\w*\z/', $table);
-        Classify::cover($valid, 'accepted', 15.0);
-        Classify::cover(!$valid, 'rejected', 15.0);
+        // The alphabet yields ~19% accepted names (measured over 20k draws):
+        // only a `.` anywhere, or a leading digit, disqualifies one. The gates
+        // sit far enough below that a green run never trips them by chance,
+        // while still failing if a generator change stops reaching a branch.
+        Classify::cover($valid, 'accepted', 8.0);
+        Classify::cover(!$valid, 'rejected', 40.0);
 
         $trace = $this->bookkeepingTracingClient($queries, $selects, $inserts);
 

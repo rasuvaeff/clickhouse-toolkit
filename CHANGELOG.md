@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.0 — 2026-09-10
 
 - `ClickHouseMigrationRunner` accepts `$migrationsTable`: the bookkeeping table
   recording applied migrations is no longer hardcoded to `_migrations`. Adopting
