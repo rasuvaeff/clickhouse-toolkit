@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 — 2026-09-11
 
 - `ClickHouseMigrationRunner::run()` and `status()` now throw a
   `ClickHouseMigrationException` naming the path when `$migrationsPath` is not a
