@@ -47,18 +47,12 @@ final class ClickHouseMigrationsRunCommandTest
     {
         $dir = $this->makeTempDirWithTwoMigrations();
 
-        $rows = [];
+        $records = [];
         foreach (['001_a.sql', '002_b.sql'] as $name) {
-            $checksum = sha1((string) file_get_contents($dir . '/' . $name));
-            $rows[] = sprintf('{"name":"%s","current_checksum":"%s","variants":1}', $name, $checksum);
+            $records[$name] = sha1((string) file_get_contents($dir . '/' . $name));
         }
 
-        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn() => new JsonEachRow(implode("\n", $rows)));
-        $runner = new ClickHouseMigrationRunner($client, $dir);
-        $command = new ClickHouseMigrationsRunCommand($runner);
-        $command->setApplication(new \Symfony\Component\Console\Application());
-        $tester = new CommandTester($command);
+        $tester = $this->testerWithRecords($dir, $records);
 
         $exitCode = $tester->execute([]);
 
@@ -84,6 +78,87 @@ final class ClickHouseMigrationsRunCommandTest
 
         Assert::same($exitCode, 1);
         Assert::string($tester->getDisplay())->contains('was changed after it was applied');
+    }
+
+    /**
+     * `run()` only walks files, so a record whose file is gone is invisible to it.
+     * Without the extra status() read the two commands contradicted each other:
+     * `status` reported `1 missing` where `migrate` reported an up-to-date schema.
+     */
+    public function warnsAboutRecordedMigrationsMissingFromDisk(): void
+    {
+        $dir = $this->makeTempDirWithTwoMigrations();
+        $tester = $this->testerWithRecords($dir, [
+            '098_renamed.sql' => 'cafebabe',
+            '099_dropped.sql' => 'deadbeef',
+        ]);
+
+        $exitCode = $tester->execute([]);
+
+        Assert::same($exitCode, 0);
+        $output = $tester->getDisplay();
+        Assert::string($output)->contains('2 recorded migration');
+        Assert::string($output)->contains('098_renamed.sql');
+        Assert::string($output)->contains('099_dropped.sql');
+        Assert::string($output)->contains('no longer exist on disk');
+        Assert::string($output)->contains('Applied 2 migration');
+    }
+
+    /**
+     * Nothing pending and a record missing its file: the summary must not claim
+     * the schema is up to date, or it contradicts `status` in the same state.
+     */
+    public function summaryReflectsMissingMigrationsWhenNothingToApply(): void
+    {
+        $dir = $this->makeTempDirWithTwoMigrations();
+        $records = ['099_dropped.sql' => 'deadbeef'];
+        foreach (['001_a.sql', '002_b.sql'] as $name) {
+            $records[$name] = sha1((string) file_get_contents($dir . '/' . $name));
+        }
+
+        $tester = $this->testerWithRecords($dir, $records);
+
+        $exitCode = $tester->execute([]);
+
+        Assert::same($exitCode, 0);
+        $output = $tester->getDisplay();
+        Assert::string($output)->contains('099_dropped.sql');
+        Assert::string($output)->contains('missing from disk');
+        Assert::string($output)->notContains('up to date');
+    }
+
+    public function returnsFailureWhenMigrationsPathIsNotADirectory(): void
+    {
+        $path = sys_get_temp_dir() . '/chcmdrun_absent_' . uniqid('', more_entropy: true);
+        $tester = $this->tester($path);
+
+        $exitCode = $tester->execute([]);
+
+        Assert::same($exitCode, 1);
+        Assert::string($tester->getDisplay())->contains($path);
+    }
+
+    /**
+     * @param array<string, string> $records Migration name => recorded checksum.
+     */
+    private function testerWithRecords(string $dir, array $records): CommandTester
+    {
+        $rows = [];
+        foreach ($records as $name => $checksum) {
+            $rows[] = sprintf(
+                '{"name":"%s","current_checksum":"%s","current_applied_at":"2026-06-14 10:00:00.000000","variants":1}',
+                $name,
+                $checksum,
+            );
+        }
+
+        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
+            ->withSelectCallback(fn() => new JsonEachRow(implode("\n", $rows)));
+        $runner = new ClickHouseMigrationRunner($client, $dir);
+        $command = new ClickHouseMigrationsRunCommand($runner);
+        $command->setApplication(new \Symfony\Component\Console\Application());
+
+        return new CommandTester($command);
     }
 
     private function tester(string $dir): CommandTester

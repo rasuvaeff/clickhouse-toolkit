@@ -23,6 +23,10 @@ use SimPod\ClickHouseClient\Format\JsonEachRow;
  *   file) is what keeps existing installations on default values byte-identical
  *   to what they applied.
  * - One statement per file (the contents are sent as a single query).
+ * - Fail-fast on the directory: a `$migrationsPath` that does not exist is a
+ *   {@see ClickHouseMigrationException}, not an empty set of files. A mistyped
+ *   path is otherwise indistinguishable from "nothing to apply", and the
+ *   deploy that reported success leaves the schema uncreated.
  *
  * Concurrency & failure: ClickHouse has no transactions, and this runner uses
  * no distributed lock. The bookkeeping table is a ReplacingMergeTree keyed by
@@ -73,7 +77,9 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
     /**
      * @return list<string> Applied migration names
      *
-     * @throws ClickHouseMigrationException
+     * @throws ClickHouseMigrationException when `$migrationsPath` is not a directory, a
+     *                                      migration file changed after it was applied,
+     *                                      or a placeholder is unresolved
      */
     #[\Override]
     public function run(): array
@@ -139,7 +145,8 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
      *
      * @return list<ClickHouseMigrationStatus> Sorted by migration name.
      *
-     * @throws ClickHouseMigrationException if the bookkeeping table cannot be read.
+     * @throws ClickHouseMigrationException if the bookkeeping table cannot be read,
+     *                                       or `$migrationsPath` is not a directory.
      */
     public function status(): array
     {
@@ -322,9 +329,18 @@ final readonly class ClickHouseMigrationRunner implements ClickHouseMigrationRun
 
     /**
      * @return list<string>
+     *
+     * @throws ClickHouseMigrationException when `$migrationsPath` is not a directory
      */
     private function getMigrationFiles(): array
     {
+        if (!is_dir(filename: $this->migrationsPath)) {
+            throw new ClickHouseMigrationException(sprintf(
+                'ClickHouse migrations path "%s" is not a directory.',
+                $this->migrationsPath,
+            ));
+        }
+
         $files = glob(pattern: $this->migrationsPath . '/*.sql');
         if ($files === false) {
             return [];

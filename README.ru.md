@@ -309,6 +309,16 @@ $rows  = $page->read();    // mapped values
 
 Реализует `read()`, `readOne()`, `count()`, `getIterator()` и иммутабельные `withFilter/withSort/withLimit/withOffset` (+ геттеры). Без лимита `read()` опускает `LIMIT` и возвращает полный результат.
 
+Ридер параметризован типом возврата mapper'а, и каждый `withX()` этот тип сохраняет — аннотируйте ридер один раз, и `read()`/`readOne()` останутся типизированными за любой цепочкой `withX()`, без `@var` на месте вызова:
+
+```php
+/** @var ClickHouseDataReader<EventRow> $reader */
+$reader = new ClickHouseDataReader(/* … */ mapper: static fn (array $row): EventRow => new EventRow((int) $row['id']));
+
+$reader->withFilter(new Equals('id', 1))->readOne(); // EventRow|null
+$reader->withLimit(20)->read();                      // list<EventRow>
+```
+
 > `read()` / `getIterator()` материализуют весь результат в памяти. Для перебора большой выборки с ограниченным потреблением памяти используйте `ClickHouseKeysetReader` ниже.
 
 ### `ClickHouseKeysetReader`
@@ -454,6 +464,7 @@ $mb->killMutation('events', $mutationId);
 - **Опциональное PSR-3-логирование** — передайте `LoggerInterface`, чтобы логировать применённые/пропущенные файлы.
 - **Параметризуемость** — токены `{{key}}` заменяются из `$placeholders` до вычисления контрольной суммы и выполнения, поэтому пакет может поставлять DDL, имена таблиц в котором настраивает приложение. Неразрешённый токен — ошибка, а не запрос, ушедший на сервер.
 - **Переносимая служебная таблица** — `$migrationsTable` переименовывает саму таблицу трекинга.
+- **Fail-fast по каталогу** — несуществующий (или не являющийся каталогом) `migrationsPath` даёт `ClickHouseMigrationException` с указанием пути. `glob()` возвращает пустой список для опечатки в пути ровно так же, как для пустого каталога, поэтому без этой проверки неверный путь на одном из стендов рапортовал «нечего применять» и оставлял схему несозданной; первая ошибка всплывала позже — на запросе к так и не созданной таблице.
 
 ```php
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
@@ -563,7 +574,14 @@ foreach ($statuses as $status) {
 |---|---|---|
 | `clickhouse:migrations:generate <description>` | `ClickHouseMigrationGenerator::generate()` | Создаёт `NNN_description.sql` со следующим префиксом. Exit `2` при некорректном описании, `1` при ошибке файловой системы. |
 | `clickhouse:migrations:status` | `ClickHouseMigrationRunner::status()` | Печатает таблицу миграций + счётчики состояний. Exit `1`, если есть `Missing` или `Diverged`. |
-| `clickhouse:migrations:migrate` | `ClickHouseMigrationRunner::run()` | Применяет ожидающие миграции, по строке на файл. Идемпотентно. |
+| `clickhouse:migrations:migrate` | `ClickHouseMigrationRunner::run()` + `status()` | Применяет ожидающие миграции, по строке на файл. Идемпотентно. Предупреждает о записанных миграциях, файлы которых исчезли с диска, и всё равно выходит с `0` — см. ниже. |
+
+> **Почему `migrate` предупреждает там, где `status` падает.** `run()` обходит файлы на
+> диске, поэтому запись, файл которой удалён, для него невидима: `status` в этом же
+> состоянии показывал `1 missing`, а `migrate` — «схема актуальна». Теперь `migrate`
+> после применения читает статус и называет такие записи — но по-прежнему выходит с `0`:
+> его задача — применить ожидающее, а удалённый файл не повод валить деплой. Гейтом
+> служит `clickhouse:migrations:status` — вот он выходит с `1` на `Missing`/`Diverged`.
 
 Зарегистрируйте их в Symfony Console `Application`:
 

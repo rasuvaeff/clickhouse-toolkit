@@ -46,6 +46,9 @@ final class ClickHouseDataReader implements DataReaderInterface
         $this->filter = new All();
     }
 
+    /**
+     * @return static<TValue>
+     */
     #[\Override]
     public function withFilter(FilterInterface $filter): static
     {
@@ -61,6 +64,9 @@ final class ClickHouseDataReader implements DataReaderInterface
         return $this->filter;
     }
 
+    /**
+     * @return static<TValue>
+     */
     #[\Override]
     public function withSort(?Sort $sort): static
     {
@@ -78,6 +84,8 @@ final class ClickHouseDataReader implements DataReaderInterface
 
     /**
      * @param int|null $limit Any non-negative limit; negative values are rejected.
+     *
+     * @return static<TValue>
      */
     #[\Override]
     public function withLimit(?int $limit): static
@@ -98,6 +106,9 @@ final class ClickHouseDataReader implements DataReaderInterface
         return $this->limit;
     }
 
+    /**
+     * @return static<TValue>
+     */
     #[\Override]
     public function withOffset(int $offset): static
     {
@@ -126,6 +137,12 @@ final class ClickHouseDataReader implements DataReaderInterface
         return $this->fetch(limit: $this->limit, offset: $this->offset);
     }
 
+    /**
+     * Psalm-prefixed: a plain `@return TValue|null` reads as a redundant
+     * restatement of the native `array|object|null` to rector, which strips it.
+     *
+     * @psalm-return TValue|null
+     */
     #[\Override]
     public function readOne(): array|object|null
     {

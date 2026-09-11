@@ -317,6 +317,16 @@ $rows  = $page->read();    // mapped values
 
 Implements `read()`, `readOne()`, `count()`, `getIterator()`, and the immutable `withFilter/withSort/withLimit/withOffset` (+ getters). With no limit set, `read()` omits `LIMIT` and returns the full result.
 
+The reader is generic in the mapper's return type, and every `withX()` carries that type over — annotate the reader once and `read()`/`readOne()` stay typed behind any chain of them, with no `@var` at the call site:
+
+```php
+/** @var ClickHouseDataReader<EventRow> $reader */
+$reader = new ClickHouseDataReader(/* … */ mapper: static fn (array $row): EventRow => new EventRow((int) $row['id']));
+
+$reader->withFilter(new Equals('id', 1))->readOne(); // EventRow|null
+$reader->withLimit(20)->read();                      // list<EventRow>
+```
+
 > `read()` / `getIterator()` materialize the whole result in memory. To iterate a large result set with bounded memory, use `ClickHouseKeysetReader` below.
 
 ### `ClickHouseKeysetReader`
@@ -473,6 +483,7 @@ Applies `*.sql` files from a directory in filename order, recording each applied
 - **Optional PSR-3 logging** — pass a `LoggerInterface` to log applied/skipped files.
 - **Parameterisable** — `{{key}}` tokens are replaced from `$placeholders` before the file is hashed and executed, so a package can ship DDL whose table names the application configures. An unresolved token is an error, not a query sent to the server.
 - **Relocatable bookkeeping** — `$migrationsTable` renames the tracking table itself.
+- **Fail-fast on the directory** — a `migrationsPath` that does not exist (or is not a directory) raises a `ClickHouseMigrationException` naming the path. `glob()` returns an empty list for a mistyped path exactly as it does for an empty directory, so without this check a wrong path on one environment reported "nothing to apply" and left the schema uncreated; the first failure surfaced later, on a query against a table that was never made.
 
 ```php
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
@@ -583,7 +594,14 @@ Three Symfony Console commands wrap the migration API for CLI use. They live in 
 |---|---|---|
 | `clickhouse:migrations:generate <description>` | `ClickHouseMigrationGenerator::generate()` | Creates `NNN_description.sql` with the next prefix. Exit `2` on invalid description, `1` on filesystem failure. |
 | `clickhouse:migrations:status` | `ClickHouseMigrationRunner::status()` | Prints a table of migrations + state counts. Exit `1` when any `Missing` or `Diverged` exists. |
-| `clickhouse:migrations:migrate` | `ClickHouseMigrationRunner::run()` | Applies pending migrations, one line per file. Idempotent. |
+| `clickhouse:migrations:migrate` | `ClickHouseMigrationRunner::run()` + `status()` | Applies pending migrations, one line per file. Idempotent. Warns about recorded migrations whose file is gone from disk, and still exits `0` — see below. |
+
+> **Why `migrate` warns where `status` fails.** `run()` walks the files on disk, so a
+> record whose file was deleted is invisible to it: `status` reported `1 missing` while
+> `migrate` reported an up-to-date schema in the same state. `migrate` now reads the
+> status after applying and names those records — but still exits `0`, because its job is
+> applying what is pending, and a deleted file is not a reason to fail a deploy. Use
+> `clickhouse:migrations:status` as the gate: that one exits `1` on `Missing` or `Diverged`.
 
 Register them in your Symfony Console `Application`:
 

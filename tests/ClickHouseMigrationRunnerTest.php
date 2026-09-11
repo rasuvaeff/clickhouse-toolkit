@@ -508,6 +508,53 @@ final class ClickHouseMigrationRunnerTest
     }
 
     /**
+     * A mistyped or stand-specific path used to be indistinguishable from an
+     * empty directory: glob() returns [] for both, so run() reported success
+     * having created nothing. The path is the one setting that cannot be
+     * verified locally, where it is correct by definition.
+     */
+    public function runThrowsWhenMigrationsPathIsNotADirectory(): void
+    {
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $path = sys_get_temp_dir() . '/chmigr_absent_' . uniqid('', more_entropy: true);
+
+        $runner = new ClickHouseMigrationRunner($client, $path);
+
+        Expect::exception(ClickHouseMigrationException::class)->withMessageContaining($path);
+
+        $runner->run();
+    }
+
+    public function statusThrowsWhenMigrationsPathIsNotADirectory(): void
+    {
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $path = sys_get_temp_dir() . '/chmigr_absent_' . uniqid('', more_entropy: true);
+
+        $runner = new ClickHouseMigrationRunner($client, $path);
+
+        Expect::exception(ClickHouseMigrationException::class)->withMessageContaining($path);
+
+        $runner->status();
+    }
+
+    /**
+     * A file where the directory is expected is the same misconfiguration.
+     */
+    public function runThrowsWhenMigrationsPathIsAFile(): void
+    {
+        $dir = $this->makeTempDir();
+        $file = $dir . '/not-a-directory.sql';
+        file_put_contents($file, 'CREATE TABLE x (a UInt8) ENGINE = Memory');
+
+        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $runner = new ClickHouseMigrationRunner($client, $file);
+
+        Expect::exception(ClickHouseMigrationException::class)->withMessageContaining($file);
+
+        $runner->run();
+    }
+
+    /**
      * The name is interpolated into SQL rather than bound, so anything that is
      * not a plain identifier — a `db.table` form included, since backticks wrap
      * the whole string — must be refused before a single statement is sent.

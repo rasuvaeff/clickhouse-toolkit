@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.8.0 — 2026-09-11
+
+- `ClickHouseMigrationRunner::run()` and `status()` now throw a
+  `ClickHouseMigrationException` naming the path when `$migrationsPath` is not a
+  directory, instead of treating it as an empty set of files. `glob()` returns an
+  empty list for a mistyped path exactly as it does for an empty directory, so a
+  wrong path — the one setting that cannot be verified locally, where it is
+  correct by definition — made a deploy report success with no table created; the
+  failure surfaced later, on the first query against a table that was never made.
+  Behaviour change: a runner pointed at a directory that does not exist yet now
+  fails instead of returning `[]` (#31).
+- `clickhouse:migrations:migrate` reports recorded migrations whose file is gone
+  from disk. `run()` only walks the files, so it could not see them, and the two
+  commands contradicted each other: `status` reported `1 missing` where `migrate`
+  reported an up-to-date schema. The command now reads the status once after
+  applying, warns naming those records, and reflects them in the summary — while
+  still exiting `0`, since applying what is pending is its job and a deleted file
+  is not a reason to fail a deploy. `clickhouse:migrations:status` remains the
+  gate that exits `1` (#31).
+- `ClickHouseDataReader::withFilter()`, `withSort()`, `withLimit()` and
+  `withOffset()` carry the `TValue` template argument over to the returned
+  instance, and `readOne()` is annotated `TValue|null`. Psalm used to widen the
+  reader back to its `array|object` bound behind any `withX()`, so every
+  `read()`/`readOne()` after one lost its type and consumers had to re-annotate
+  at each call site — an annotation that could not catch a mapper returning a
+  different object type, both satisfying the bound. Docblocks only; no runtime
+  or signature change (#32).
+
 ## 1.7.0 — 2026-09-10
 
 - `ClickHouseMigrationRunner` accepts `$migrationsTable`: the bookkeeping table

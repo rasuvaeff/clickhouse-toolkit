@@ -24,6 +24,8 @@ composer require guzzlehttp/guzzle
 - The query builder is NOT an ACL layer: disallowed/unknown filters are silently
   dropped (widening). Enforce tenant/owner constraints with a separate, always-
   present hard-coded WHERE.
+- `migrationsPath` must be an existing directory: the runner throws instead of
+  treating a mistyped path as "nothing to apply".
 - `orderBy` passed to `buildSelect` and non-empty `defaultSort` are trusted raw fragments —
   use `buildOrderBy()` output or constants. Default `defaultSort` is empty (no ORDER BY).
 
@@ -136,6 +138,9 @@ $page = $reader->withFilter(new Equals('status','active'))
 $rows  = $page->read();   // list<TValue> ; readOne(): ?TValue ; getIterator()
 $count = $page->count();  // ignores limit/offset
 // Immutable: every with*() returns a new instance. Negative limit/offset throw.
+// Generic in the mapper's return type, preserved across every with*(): annotate
+// once (/** @var ClickHouseDataReader<EventRow> $reader */) and read()/readOne()
+// stay typed behind any chain — no @var at the call site.
 // Plugs into yiisoft/data OffsetPaginator/KeysetPaginator.
 // NOTE: read()/getIterator() materialize the whole result. For large scans use KeysetReader.
 ```
@@ -259,6 +264,12 @@ $applied = $runner->run(); // list<string> of files applied this call; idempoten
 // migration), or to keep two applications on one database apart. Interpolated,
 // not bound: must match /^[A-Za-z_]\w*\z/, and `db.table` is refused.
 // Changed-after-apply or conflicting checksums => ClickHouseMigrationException.
+// migrationsPath that is not a directory => ClickHouseMigrationException naming it.
+// glob() cannot tell a typo from an empty dir, so a wrong path used to report
+// "nothing to apply" and leave the schema uncreated. Same check in status().
+// CLI: clickhouse:migrations:migrate warns about recorded migrations whose file
+// is gone (run() only walks files, so it cannot see them) and still exits 0;
+// clickhouse:migrations:status is the gate — exits 1 on Missing/Diverged.
 // No transactions/locks in ClickHouse: run from a single deploy step; prefer
 // idempotent DDL (CREATE TABLE IF NOT EXISTS, ALTER ... ADD COLUMN IF NOT EXISTS).
 ```
