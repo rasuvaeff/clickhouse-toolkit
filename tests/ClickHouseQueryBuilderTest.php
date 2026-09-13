@@ -407,6 +407,21 @@ final class ClickHouseQueryBuilderTest
         Assert::same($clause->params, ['d' => '2024-01-01']);
     }
 
+    /**
+     * The mandatory filter and the user filter are merged at the builder, one
+     * level above the visitor's composites — a raw name shared between them
+     * must resolve there too (#34).
+     */
+    public function mandatoryRawNameReusedByTheUserFilterIsRenamed(): void
+    {
+        $qb = $this->builder->withMandatoryFilter(new ClickHouseRawFilter('tenant_id = {t:UInt64}', ['t' => 1]));
+
+        $clause = $qb->buildWhere(new ClickHouseRawFilter('id = {t:UInt64}', ['t' => 3]));
+
+        Assert::same($clause->sql, '(tenant_id = {t:UInt64}) AND (id = {t_0:UInt64})');
+        Assert::same($clause->params, ['t' => 1, 't_0' => 3]);
+    }
+
     public function buildWhereWithoutFilterIsEmptyWhenNoMandatory(): void
     {
         Assert::true($this->builder->buildWhere()->isEmpty());
@@ -518,6 +533,22 @@ final class ClickHouseQueryBuilderTest
         ]));
 
         Assert::same($clause->params, ['p0' => '2024-01-01 02:00:00', 'p1' => '2024-01-01 05:00:00']);
+    }
+
+    /**
+     * A custom visitor owns the merge inside its composites; the builder
+     * still isolates what it merges itself — mandatory versus user filter.
+     */
+    public function builderRenamesCollidingNamesReturnedByACustomVisitor(): void
+    {
+        $visitor = new FakeClickHouseFilterVisitor(returnValue: ['custom = {x:UInt64}', ['x' => 9]]);
+        $qb = (new ClickHouseQueryBuilder(allowedFields: ['id'], customVisitor: $visitor))
+            ->withMandatoryFilter(new Equals('id', 1));
+
+        $clause = $qb->buildWhere(new Equals('id', 2));
+
+        Assert::same($clause->sql, '(custom = {x:UInt64}) AND (custom = {x_0:UInt64})');
+        Assert::same($clause->params, ['x' => 9, 'x_0' => 9]);
     }
 
     public function customVisitorIsUsedForSqlGeneration(): void

@@ -23,11 +23,13 @@ use Testo\Assert;
 use Testo\Codecov\CoversNothing;
 use Testo\Lifecycle\BeforeTest;
 use Testo\Test;
+use Yiisoft\Data\Reader\Filter\AndX;
 use Yiisoft\Data\Reader\Filter\Between;
 use Yiisoft\Data\Reader\Filter\Equals;
 use Yiisoft\Data\Reader\Filter\GreaterThan;
 use Yiisoft\Data\Reader\Filter\In;
 use Yiisoft\Data\Reader\Filter\Like;
+use Yiisoft\Data\Reader\Filter\OrX;
 
 #[Test]
 #[CoversNothing]
@@ -258,6 +260,35 @@ final class ClickHouseIntegrationTest
         $sql2 = $qb->buildSelect(table: self::TABLE, columns: ['id'], where: $raw->sql, limit: 100);
         $rows2 = $this->client->selectWithParams($sql2, $raw->params, new JsonEachRow())->data;
         Assert::same(array_map(static fn(array $r): int => (int) $r['id'], $rows2), [2, 4]);
+    }
+
+    /**
+     * Renamed placeholders must bind on a live server (#34): the rewritten
+     * `{v_0:UInt64}` token and the `v_0` HTTP parameter have to agree.
+     */
+    public function rawFiltersSharingAParameterNameBothBind(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+        $qb = (new ClickHouseQueryBuilder(
+            allowedFields: ['id', 'status'],
+            fieldTypes: ['id' => 'UInt64'],
+            defaultSort: 'id ASC',
+        ))->withMandatoryFilter(new ClickHouseRawFilter('id <= {v:UInt64}', ['v' => 4]));
+
+        $where = $qb->buildWhere(new AndX(
+            new ClickHouseRawFilter('id > {v:UInt64}', ['v' => 1]),
+            new OrX(
+                new ClickHouseRawFilter('id = {v:UInt64}', ['v' => 2]),
+                new ClickHouseRawFilter('id BETWEEN {v:UInt64} AND {v_max:UInt64}', ['v' => 3, 'v_max' => 4]),
+            ),
+            new Equals('id', 2),
+        ));
+        $sql = $qb->buildSelect(table: self::TABLE, columns: ['id'], where: $where->sql, limit: 100);
+        $rows = $this->client->selectWithParams($sql, $where->params, new JsonEachRow())->data;
+
+        Assert::same(array_map(static fn(array $r): int => (int) $r['id'], $rows), [2]);
     }
 
     public function dataTypeFactoriesProduceValidColumnTypes(): void

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
+use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseSqlFilterVisitor;
 use Rasuvaeff\PropertyTesting\ArbitraryInterface;
+use Rasuvaeff\PropertyTesting\Classify;
 use Rasuvaeff\PropertyTesting\Gen;
 use Rasuvaeff\PropertyTesting\Property;
 use Testo\Assert;
@@ -424,5 +426,163 @@ final class ClickHouseSqlFilterVisitorTest
     public static function inBindsOneParameterPerValueGenerators(): array
     {
         return ['values' => Gen::nonEmptyArrayOf(Gen::intBetween(-1_000, 1_000))];
+    }
+
+    /**
+     * Issue #34: two raw siblings reusing `v` used to merge by name, so the
+     * SQL kept both tokens while only the last value was bound.
+     */
+    public function compositeRenamesARawNameTakenByAnEarlierRawSibling(): void
+    {
+        $index = 0;
+        $result = $this->visitor->visitAndX(new AndX(
+            new ClickHouseRawFilter('id > {v:UInt64}', ['v' => 1]),
+            new ClickHouseRawFilter('id < {v:UInt64}', ['v' => 5]),
+        ), $index, trusted: false);
+
+        Assert::same($result[0], '(id > {v:UInt64} AND id < {v_0:UInt64})');
+        Assert::same($result[1], ['v' => 1, 'v_0' => 5]);
+    }
+
+    #[DataProvider('rawVersusBuilderKeyProvider')]
+    public function compositeRenamesWhicheverSiblingComesSecondWhenARawNameMatchesABuilderKey(
+        FilterInterface $filter,
+        string $expectedSql,
+        array $expectedParams,
+    ): void {
+        $index = 0;
+        $result = $this->visitor->dispatch($filter, $index, trusted: false);
+
+        Assert::same($result[0], $expectedSql);
+        Assert::same($result[1], $expectedParams);
+    }
+
+    /**
+     * @return iterable<string, array{FilterInterface, string, array<string, mixed>}>
+     */
+    public static function rawVersusBuilderKeyProvider(): iterable
+    {
+        yield 'builder key first' => [
+            new AndX(new Equals('id', 7), new ClickHouseRawFilter('id < {p0:UInt64}', ['p0' => 5])),
+            '(id = {p0:UInt64} AND id < {p0_0:UInt64})',
+            ['p0' => 7, 'p0_0' => 5],
+        ];
+        yield 'raw first' => [
+            new AndX(new ClickHouseRawFilter('id < {p0:UInt64}', ['p0' => 5]), new Equals('id', 7)),
+            '(id < {p0:UInt64} AND id = {p0_0:UInt64})',
+            ['p0' => 5, 'p0_0' => 7],
+        ];
+        yield 'raw name reused inside a nested OR' => [
+            new AndX(
+                new ClickHouseRawFilter('id > {v:UInt64}', ['v' => 1]),
+                new OrX(
+                    new ClickHouseRawFilter('id = {v:UInt64}', ['v' => 2]),
+                    new ClickHouseRawFilter('id = {v:UInt64} AND id < {v_max:UInt64}', ['v' => 3, 'v_max' => 9]),
+                ),
+            ),
+            '(id > {v:UInt64} AND (id = {v_0:UInt64} OR id = {v_0_0:UInt64} AND id < {v_max:UInt64}))',
+            ['v' => 1, 'v_0' => 2, 'v_0_0' => 3, 'v_max' => 9],
+        ];
+        yield 'NOT passes a single child through unchanged' => [
+            new Not(new ClickHouseRawFilter('id = {v:UInt64}', ['v' => 2])),
+            'NOT (id = {v:UInt64})',
+            ['v' => 2],
+        ];
+    }
+
+    /**
+     * Whatever the tree, every `{name:` token in the SQL is bound by exactly
+     * one key, every key is referenced, and no leaf value is lost — the
+     * invariant that a merge by name broke (#34).
+     */
+    #[Property(runs: 300)]
+    public function everyPlaceholderIsBoundExactlyOnceAndNoValueIsLost(FilterInterface $tree): void
+    {
+        $index = 0;
+        [$sql, $params] = $this->visitor->dispatch($tree, $index, trusted: false);
+
+        preg_match_all('/\{(\w+):/', $sql, $matches);
+        $referenced = array_values(array_unique($matches[1]));
+        $bound = array_keys($params);
+        sort($referenced);
+        sort($bound);
+        Assert::same($referenced, $bound);
+
+        $expectedValues = self::leafValues($tree);
+        $boundValues = array_values($params);
+        sort($expectedValues);
+        sort($boundValues);
+        Assert::same($boundValues, $expectedValues);
+
+        Classify::cover(condition: in_array('v_0', $bound, strict: true), label: 'raw name renamed', minPercent: 15);
+        Classify::cover(condition: in_array('p0_0', $bound, strict: true) || in_array('p1_0', $bound, strict: true), label: 'builder key renamed', minPercent: 15);
+        Classify::cover(condition: str_contains($sql, 'OR'), label: 'has OR', minPercent: 30);
+    }
+
+    /** @return array<string, ArbitraryInterface> */
+    public static function everyPlaceholderIsBoundExactlyOnceAndNoValueIsLostGenerators(): array
+    {
+        $leaf = Gen::frequency([
+            [3, Gen::elements([
+                new ClickHouseRawFilter('id > {v:UInt64}', ['v' => 1]),
+                new ClickHouseRawFilter('id < {v:UInt64}', ['v' => 5]),
+                new ClickHouseRawFilter('id BETWEEN {v:UInt64} AND {v_max:UInt64}', ['v' => 2, 'v_max' => 8]),
+                new ClickHouseRawFilter('id = {p0:UInt64}', ['p0' => 3]),
+                new ClickHouseRawFilter('id = {p1:UInt64}', ['p1' => 4]),
+            ])],
+            [2, Gen::elements([
+                new Equals('id', 7),
+                new GreaterThan('id', 6),
+                new In('id', [10, 11]),
+                new Between('id', 20, 30),
+            ])],
+        ]);
+        $combine = static fn(ArbitraryInterface $inner): ArbitraryInterface => Gen::frequency([
+            [1, Gen::map($inner, static fn(FilterInterface $f): Not => new Not($f))],
+            [2, Gen::map(Gen::tuple($inner, $inner), static fn(array $pair): AndX => new AndX($pair[0], $pair[1]))],
+            [2, Gen::map(Gen::tuple($inner, $inner), static fn(array $pair): OrX => new OrX($pair[0], $pair[1]))],
+        ]);
+
+        return ['tree' => $combine(Gen::recursive(leaf: $leaf, wrap: $combine, maxDepth: 2))];
+    }
+
+    /**
+     * @return iterable<string, array{FilterInterface}>
+     */
+    public static function everyPlaceholderIsBoundExactlyOnceAndNoValueIsLostExamples(): iterable
+    {
+        yield 'issue #34: raw siblings share v' => [new AndX(
+            new ClickHouseRawFilter('id > {v:UInt64}', ['v' => 1]),
+            new ClickHouseRawFilter('id < {v:UInt64}', ['v' => 5]),
+        )];
+        yield 'issue #34: raw p0 next to a builder p0' => [new AndX(
+            new Equals('id', 7),
+            new ClickHouseRawFilter('id < {p0:UInt64}', ['p0' => 5]),
+        )];
+        yield 'renamed name collides again one level up' => [new AndX(
+            new ClickHouseRawFilter('id > {v:UInt64}', ['v' => 1]),
+            new OrX(
+                new ClickHouseRawFilter('id = {v:UInt64}', ['v' => 2]),
+                new ClickHouseRawFilter('id = {v:UInt64}', ['v' => 5]),
+            ),
+        )];
+    }
+
+    /**
+     * @return list<mixed> Every value the tree's leaves would bind, in no particular order.
+     */
+    private static function leafValues(FilterInterface $filter): array
+    {
+        return match (true) {
+            $filter instanceof ClickHouseRawFilter => array_values($filter->params),
+            $filter instanceof Not => self::leafValues($filter->filter),
+            $filter instanceof AndX, $filter instanceof OrX => array_merge(
+                ...array_map(self::leafValues(...), array_values($filter->filters)),
+            ),
+            $filter instanceof In => array_values($filter->values),
+            $filter instanceof Between => [$filter->minValue, $filter->maxValue],
+            $filter instanceof Equals, $filter instanceof GreaterThan => [$filter->value],
+            default => [],
+        };
     }
 }

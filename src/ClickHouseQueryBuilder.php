@@ -130,16 +130,16 @@ final readonly class ClickHouseQueryBuilder
         if ($this->mandatoryFilter instanceof FilterInterface) {
             [$sql, $sub] = $this->visitor->dispatch($this->mandatoryFilter, $index, true);
             if ($sql !== '') {
+                [$sql, $params] = PlaceholderRemap::merge($params, $sql, $sub);
                 $parts[] = $sql;
-                $params = array_merge($params, $sub);
             }
         }
 
         if ($filter instanceof FilterInterface) {
             [$sql, $sub] = $this->visitor->dispatch($filter, $index, false);
             if ($sql !== '') {
+                [$sql, $params] = PlaceholderRemap::merge($params, $sql, $sub);
                 $parts[] = $sql;
-                $params = array_merge($params, $sub);
             }
         }
 

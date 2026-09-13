@@ -99,7 +99,13 @@ docker rm -f ch-test
   dropped** (widening) — enforce ACL/tenant constraints with
   `withMandatoryFilter()` (always applied, AND-combined, bypasses the allow-list),
   never via the user filter. `ClickHouseRawFilter` emits raw SQL (trusted; values
-  via `{name:Type}` params that must not clash with the `pN` keys).
+  via `{name:Type}` params). Parameter names are isolated at the two merge
+  points — `ClickHouseSqlFilterVisitor::buildComposite()` and
+  `ClickHouseQueryBuilder::buildWhere()` — through `PlaceholderRemap`: a name
+  already collected is renamed `name_0`, `name_1`, … and its `{name:` token is
+  rewritten (whole token, one pass). Every fragment a frame returns must
+  therefore have its params keyed exactly by the tokens in its SQL; a custom
+  `ClickHouseFilterVisitor` owns that invariant for its own composites (#34).
 - Migration runner: the bookkeeping table (`_migrations` by default, renamed
   via `$migrationsTable`) is `ReplacingMergeTree(applied_at) ORDER BY name` with
   microsecond `DateTime64(6)`; reads via `argMax` + `uniqExact` conflict

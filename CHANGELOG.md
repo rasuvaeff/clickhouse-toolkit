@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Two `ClickHouseRawFilter`s that reused a parameter name — under one `AndX`/`OrX`,
+  or one in the mandatory filter and one in the user filter — merged by name, so
+  the SQL kept both `{name:Type}` tokens while only the last value was bound; a
+  raw name equal to a builder key (`p0`, …) or to the keyset boundary (`ck0`, …)
+  lost the builder's value the same way. Parameters are now isolated at both
+  merge points (`ClickHouseSqlFilterVisitor` composites and
+  `ClickHouseQueryBuilder::buildWhere()`): the colliding name becomes `name_0`,
+  `name_1`, … and its token is rewritten, whichever sibling comes second. A
+  custom `ClickHouseFilterVisitor` keeps merging its own composites — only the
+  builder-level merge is applied to it. The `ck0`/`ck1` names are no longer
+  reserved (#34).
+
 ## 1.8.0 — 2026-09-11
 
 - `ClickHouseMigrationRunner::run()` and `status()` now throw a
