@@ -240,8 +240,11 @@ $where = $qb->buildWhere($userFilter); // (tenant_id = {p0:...}) AND (<user filt
 
 `ClickHouseRawFilter` is a `FilterInterface` that emits a raw SQL fragment for things
 the typed filters can't express. The SQL is trusted (never from user input); values
-go in `$params` using `{name:Type}` placeholders whose names must not clash with the
-builder's auto keys (`p0`, `p1`, …).
+go in `$params` using `{name:Type}` placeholders. Names are isolated per filter: a
+name already taken in the query — by a sibling raw filter, a builder key (`p0`,
+`p1`, …) or the mandatory filter — is renamed to `name_0`, `name_1`, … together
+with its `{name:Type}` token, so two raw filters may both use `{v:UInt64}` and both
+values stay bound.
 
 ```php
 use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
@@ -365,7 +368,7 @@ keyColumns: ['created_at' => T::DateTime, 'id' => T::UInt64],
 // boundary: (created_at, id) > ({ck0:DateTime}, {ck1:UInt64})
 ```
 
-Otherwise rows sharing a boundary key can be skipped. Key columns must be non-nullable. Boundary parameters use reserved `ck0`, `ck1`, … names — keep them clear of any `ClickHouseRawFilter` in your base filter.
+Otherwise rows sharing a boundary key can be skipped. Key columns must be non-nullable. Boundary parameters are named `ck0`, `ck1`, …; a base filter that uses the same names is renamed on merge, like any other clash.
 
 ### `ClickHouseBatchWriter`
 

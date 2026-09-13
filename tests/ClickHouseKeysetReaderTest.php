@@ -7,6 +7,7 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests;
 use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseKeysetReader;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
 use Testo\Assert;
@@ -14,6 +15,7 @@ use Testo\Codecov\Covers;
 use Testo\Expect;
 use Testo\Test;
 use Yiisoft\Data\Reader\Filter\Equals;
+use Yiisoft\Data\Reader\FilterInterface;
 
 #[Test]
 #[Covers(ClickHouseKeysetReader::class)]
@@ -145,6 +147,27 @@ final class ClickHouseKeysetReaderTest
         Assert::same($calls[1]['params'], ['p0' => 'active', 'ck0' => 2]);
     }
 
+    /**
+     * The boundary's `ck0` used to be a reserved name the base filter had to
+     * keep clear of; since #34 a clash is renamed like any other.
+     */
+    public function baseFilterMayUseTheBoundaryParameterName(): void
+    {
+        $calls = [];
+        $reader = $this->reader(
+            pages: [[['id' => 1], ['id' => 2]], [['id' => 3]]],
+            pageSize: 2,
+            filter: new ClickHouseRawFilter('id >= {ck0:UInt64}', ['ck0' => 1]),
+            calls: $calls,
+        );
+
+        iterator_to_array($reader->stream());
+
+        Assert::string($calls[1]['sql'])->contains('id >= {ck0:UInt64}');
+        Assert::string($calls[1]['sql'])->contains('id > {ck0_0:UInt64}');
+        Assert::same($calls[1]['params'], ['ck0' => 1, 'ck0_0' => 2]);
+    }
+
     public function appliesMapperToEachRow(): void
     {
         $reader = $this->reader(
@@ -243,7 +266,7 @@ final class ClickHouseKeysetReaderTest
         int $pageSize = 1000,
         array $keyColumns = ['id' => 'UInt64'],
         array $columns = [],
-        ?Equals $filter = null,
+        ?FilterInterface $filter = null,
         ?\Closure $mapper = null,
         array &$calls = [],
     ): ClickHouseKeysetReader {

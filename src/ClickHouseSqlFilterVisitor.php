@@ -269,8 +269,8 @@ final readonly class ClickHouseSqlFilterVisitor implements ClickHouseFilterVisit
         foreach ($filters as $sub) {
             [$subSql, $subParams] = $this->dispatch($sub, $index, $trusted);
             if ($subSql !== '') {
+                [$subSql, $params] = PlaceholderRemap::merge($params, $subSql, $subParams);
                 $parts[] = $subSql;
-                $params = array_merge($params, $subParams);
             }
         }
 
