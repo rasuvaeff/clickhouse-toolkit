@@ -14,6 +14,11 @@ use Rasuvaeff\PropertyTesting\ArbitraryInterface;
 use Rasuvaeff\PropertyTesting\Classify;
 use Rasuvaeff\PropertyTesting\Gen;
 use Rasuvaeff\PropertyTesting\Property;
+use Rasuvaeff\Understudy\Arg;
+use Rasuvaeff\Understudy\Captor;
+use Rasuvaeff\Understudy\Invocation;
+use Rasuvaeff\Understudy\Understudy;
+use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
 use SimPod\ClickHouseClient\Schema\Table;
@@ -22,6 +27,9 @@ use Testo\Codecov\Covers;
 use Testo\Expect;
 use Testo\Lifecycle\AfterTest;
 use Testo\Test;
+
+use function Rasuvaeff\Understudy\verify;
+use function Rasuvaeff\Understudy\when;
 
 #[Test]
 #[Covers(ClickHouseMigrationRunner::class)]
@@ -35,6 +43,10 @@ final class ClickHouseMigrationRunnerTest
     /** @var list<string> */
     private array $tempDirs = [];
 
+    private Captor $infoMessages;
+
+    private Captor $infoContexts;
+
     #[AfterTest]
     public function tearDown(): void
     {
@@ -46,40 +58,26 @@ final class ClickHouseMigrationRunnerTest
 
     public function appliesPendingMigrationsInOrder(): void
     {
-        $insertCount = 0;
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn() => $this->chOutput(''))
-            ->withInsertCallback(static function () use (&$insertCount): void {
-                $insertCount++;
-            });
+        $client = $this->clientReturning('');
 
-        $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
-
-        $applied = $runner->run();
+        $applied = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
         Assert::same($applied, ['001_create_demo.sql', '002_add_name.sql']);
-        Assert::same($insertCount, 2);
+        verify(fn() => $client->insert(Arg::any(), Arg::any()), times: 2);
     }
 
     public function skipsAlreadyAppliedMigrations(): void
     {
-        $insertCalled = false;
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn() => $this->chOutput($this->appliedRows()))
-            ->withInsertCallback(static function () use (&$insertCalled): void {
-                $insertCalled = true;
-            });
+        $client = $this->clientReturning($this->appliedRows());
 
-        $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
-
-        Assert::same($runner->run(), []);
-        Assert::false($insertCalled);
+        Assert::same((new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run(), []);
+        verify(fn() => $client->insert(Arg::any(), Arg::any()), never: true);
     }
 
     public function throwsWhenAppliedMigrationContentChanged(): void
     {
         $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":1}', sha1('tampered'));
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput($row));
+        $client = $this->clientReturning($row);
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
@@ -91,7 +89,7 @@ final class ClickHouseMigrationRunnerTest
     public function throwsWhenMigrationHasConflictingChecksums(): void
     {
         $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":2}', sha1('x'));
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput($row));
+        $client = $this->clientReturning($row);
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
@@ -102,11 +100,11 @@ final class ClickHouseMigrationRunnerTest
 
     public function ensuresMigrationsTableWithMicrosecondVersionColumn(): void
     {
-        $queries = [];
-        $client = $this->queryCapturingClient($queries);
+        $client = $this->tracingClient();
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
+        $queries = $this->executedQueries($client);
         Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `_migrations`');
         Assert::string($queries[0])->contains('ReplacingMergeTree(applied_at) ORDER BY name');
         Assert::string($queries[0])->contains('DateTime64(6)');
@@ -114,10 +112,11 @@ final class ClickHouseMigrationRunnerTest
 
     public function executesEachMigrationSqlVerbatim(): void
     {
-        $queries = [];
-        $client = $this->queryCapturingClient($queries);
+        $client = $this->tracingClient();
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
+
+        $queries = $this->executedQueries($client);
 
         foreach (['001_create_demo.sql', '002_add_name.sql'] as $name) {
             Assert::true(in_array((string) file_get_contents(self::MIGRATIONS_DIR . '/' . $name), $queries, strict: true));
@@ -129,14 +128,13 @@ final class ClickHouseMigrationRunnerTest
         $dir = $this->makeTempDir();
         file_put_contents($dir . '/001_create.sql', 'CREATE TABLE IF NOT EXISTS {{events_table}} (id UInt64) ENGINE = MergeTree ORDER BY id');
 
-        $queries = [];
-        $client = $this->queryCapturingClient($queries);
+        $client = $this->tracingClient();
 
         (new ClickHouseMigrationRunner($client, $dir, placeholders: ['events_table' => 'custom_events']))->run();
 
         Assert::true(in_array(
             'CREATE TABLE IF NOT EXISTS custom_events (id UInt64) ENGINE = MergeTree ORDER BY id',
-            $queries,
+            $this->executedQueries($client),
             strict: true,
         ));
     }
@@ -149,17 +147,11 @@ final class ClickHouseMigrationRunnerTest
         $dir = $this->makeTempDir();
         file_put_contents($dir . '/001_create.sql', 'CREATE TABLE {{events_table}} (id UInt64)');
 
-        $inserts = [];
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn() => $this->chOutput(''))
-            ->withInsertCallback(
-                static function (string $table, array $values) use (&$inserts): void {
-                    $inserts[] = $values;
-                },
-            );
+        $client = $this->clientReturning('');
 
         (new ClickHouseMigrationRunner($client, $dir, placeholders: ['events_table' => 'demo']))->run();
 
+        $inserts = $this->insertedValues($client);
         Assert::same($inserts[0][0]['checksum'], sha1('CREATE TABLE demo (id UInt64)'));
     }
 
@@ -170,35 +162,34 @@ final class ClickHouseMigrationRunnerTest
         $dir = $this->makeTempDir();
         file_put_contents($dir . '/001_create.sql', 'CREATE TABLE {{events_table}} (id UInt64)');
 
-        $queries = [];
+        $client = $this->tracingClient();
         $caught = null;
 
         try {
-            (new ClickHouseMigrationRunner($this->queryCapturingClient($queries), $dir, placeholders: ['wrong_key' => 'demo']))->run();
+            (new ClickHouseMigrationRunner($client, $dir, placeholders: ['wrong_key' => 'demo']))->run();
         } catch (ClickHouseMigrationException $caught) {
         }
 
         Assert::notNull($caught);
         Assert::string($caught->getMessage())->contains('001_create.sql');
         Assert::string($caught->getMessage())->contains('{{events_table}}');
+
+        // The bookkeeping CREATE runs before any file is read; the unresolved
+        // placeholder must stop everything after it — no migration SQL executed.
+        $queries = $this->executedQueries($client);
+        Assert::same(count($queries), 1);
+        Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `_migrations`');
     }
 
     public function recordsAppliedMigrationViaInsert(): void
     {
-        $inserts = [];
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn() => $this->chOutput(''))
-            ->withInsertCallback(
-                static function (string $table, array $values, array $columns) use (&$inserts): void {
-                    $inserts[] = ['table' => $table, 'values' => $values, 'columns' => $columns];
-                },
-            );
+        $client = $this->clientReturning('');
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
         $checksum1 = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/001_create_demo.sql'));
         $checksum2 = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/002_add_name.sql'));
-        Assert::same($inserts, [
+        Assert::same($this->insertCalls($client), [
             [
                 'table' => '_migrations',
                 'values' => [['name' => '001_create_demo.sql', 'checksum' => $checksum1]],
@@ -214,49 +205,26 @@ final class ClickHouseMigrationRunnerTest
 
     public function logsAppliedMigrationViaProvidedLogger(): void
     {
-        $logCalls = [];
-        $logger = new class ($logCalls) implements LoggerInterface {
-            public function __construct(private array &$calls) {}
-
-            public function emergency(\Stringable|string $message, array $context = []): void {}
-            public function alert(\Stringable|string $message, array $context = []): void {}
-            public function critical(\Stringable|string $message, array $context = []): void {}
-            public function error(\Stringable|string $message, array $context = []): void {}
-            public function warning(\Stringable|string $message, array $context = []): void {}
-            public function notice(\Stringable|string $message, array $context = []): void {}
-            public function info(\Stringable|string $message, array $context = []): void
-            {
-                $this->calls[] = [$message, $context];
-            }
-            public function debug(\Stringable|string $message, array $context = []): void {}
-            public function log($level, \Stringable|string $message, array $context = []): void {}
-        };
-
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $logger = $this->logger();
+        $client = $this->clientReturning('');
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR, $logger))->run();
 
-        Assert::same(count($logCalls), 2);
-        Assert::same($logCalls[0][0], 'Applied ClickHouse migration {name}');
-        Assert::true(isset($logCalls[0][1]['name']));
+        verify(fn() => $logger->info(Arg::any(), Arg::any()), times: 2);
+        Assert::same($this->infoMessages->last(), 'Applied ClickHouse migration {name}');
+        Assert::true(isset($this->infoContexts->last()['name']));
     }
 
     public function continuesPastAlreadyAppliedMigrationToApplyNext(): void
     {
         $checksum = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/001_create_demo.sql'));
         $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":1}', $checksum);
-
-        $insertCount = 0;
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn() => $this->chOutput($row))
-            ->withInsertCallback(static function () use (&$insertCount): void {
-                $insertCount++;
-            });
+        $client = $this->clientReturning($row);
 
         $applied = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
         Assert::same($applied, ['002_add_name.sql']);
-        Assert::same($insertCount, 1);
+        verify(fn() => $client->insert(Arg::any(), Arg::any()), times: 1);
     }
 
     public function skipsWhitespaceOnlyMigrationButAppliesNext(): void
@@ -265,36 +233,14 @@ final class ClickHouseMigrationRunnerTest
         file_put_contents($dir . '/001_blank.sql', "   \n\t");
         file_put_contents($dir . '/002_real.sql', 'CREATE TABLE x (a UInt8) ENGINE = Memory');
 
-        $warningCalls = [];
-        $logger = new class ($warningCalls) implements LoggerInterface {
-            public function __construct(private array &$calls) {}
-
-            public function emergency(\Stringable|string $message, array $context = []): void {}
-            public function alert(\Stringable|string $message, array $context = []): void {}
-            public function critical(\Stringable|string $message, array $context = []): void {}
-            public function error(\Stringable|string $message, array $context = []): void {}
-            public function warning(\Stringable|string $message, array $context = []): void
-            {
-                $this->calls[] = [$message, $context];
-            }
-            public function notice(\Stringable|string $message, array $context = []): void {}
-            public function info(\Stringable|string $message, array $context = []): void {}
-            public function debug(\Stringable|string $message, array $context = []): void {}
-            public function log($level, \Stringable|string $message, array $context = []): void {}
-        };
-
-        $insertCount = 0;
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn() => $this->chOutput(''))
-            ->withInsertCallback(static function () use (&$insertCount): void {
-                $insertCount++;
-            });
+        $logger = Understudy::for(LoggerInterface::class);
+        $client = $this->clientReturning('');
 
         $applied = (new ClickHouseMigrationRunner($client, $dir, $logger))->run();
 
         Assert::same($applied, ['002_real.sql']);
-        Assert::same($insertCount, 1);
-        Assert::same(count($warningCalls), 1);
+        verify(fn() => $client->insert(Arg::any(), Arg::any()), times: 1);
+        verify(fn() => $logger->warning(Arg::any(), Arg::any()), times: 1);
     }
 
     public function throwsWhenMigrationFileUnreadable(): void
@@ -302,7 +248,7 @@ final class ClickHouseMigrationRunnerTest
         $dir = $this->makeTempDir();
         symlink($dir . '/missing_target', $dir . '/001_unreadable.sql');
 
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $client = $this->clientReturning('');
         $runner = new ClickHouseMigrationRunner($client, $dir);
 
         set_error_handler(static fn(): bool => true);
@@ -323,7 +269,7 @@ final class ClickHouseMigrationRunnerTest
         file_put_contents($dir . '/010_a.sql', 'SELECT 10');
         file_put_contents($dir . '/020_b.sql', 'SELECT 20');
 
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $client = $this->clientReturning('');
 
         $applied = (new ClickHouseMigrationRunner($client, $dir))->run();
 
@@ -332,12 +278,10 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusMarksAllFilesAppliedWhenChecksumsMatch(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn() => $this->chOutput($this->appliedRecordsRows([
-                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
-                '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
-            ])),
-        );
+        $client = $this->clientReturning($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+            '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
+        ]));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -348,7 +292,7 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusMarksAllFilesPendingWhenNothingApplied(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $client = $this->clientReturning('');
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -361,12 +305,10 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusMarksFileDivergedWhenChecksumMismatches(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn() => $this->chOutput($this->appliedRecordsRows([
-                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
-                '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
-            ], 'wrong_checksum')),
-        );
+        $client = $this->clientReturning($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+            '002_add_name.sql' => ['2026-06-14 11:00:00.000000', 1],
+        ], 'wrong_checksum'));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -377,11 +319,9 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusMarksFileDivergedWhenConflictingChecksumsRecorded(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn() => $this->chOutput($this->appliedRecordsRows([
-                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 2],
-            ])),
-        );
+        $client = $this->clientReturning($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 2],
+        ]));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -392,12 +332,10 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusMarksRecordedMigrationsMissingWhenFileGone(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn() => $this->chOutput($this->appliedRecordsRows([
-                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
-                '099_dropped.sql' => ['2026-06-14 12:00:00.000000', 1],
-            ])),
-        );
+        $client = $this->clientReturning($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+            '099_dropped.sql' => ['2026-06-14 12:00:00.000000', 1],
+        ]));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -414,11 +352,9 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusSortsByNameAcrossAllStates(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn() => $this->chOutput($this->appliedRecordsRows([
-                '000_z.sql' => ['2026-06-14 09:00:00.000000', 1],
-            ])),
-        );
+        $client = $this->clientReturning($this->appliedRecordsRows([
+            '000_z.sql' => ['2026-06-14 09:00:00.000000', 1],
+        ]));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -428,11 +364,9 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusDivergedShowsCurrentFileChecksum(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn() => $this->chOutput($this->appliedRecordsRows([
-                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
-            ], 'stored_value')),
-        );
+        $client = $this->clientReturning($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 1],
+        ], 'stored_value'));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -443,27 +377,19 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusCreatesMigrationsTableBeforeReading(): void
     {
-        $queries = [];
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(fn() => $this->chOutput(''))
-            ->withExecuteQueryCallback(
-                static function (string $sql) use (&$queries): void {
-                    $queries[] = $sql;
-                },
-            );
+        $client = $this->tracingClient();
 
         (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
+        $queries = $this->executedQueries($client);
         Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `_migrations`');
     }
 
     public function statusDoesNotThrowOnDivergedOrConflictingRecords(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn() => $this->chOutput($this->appliedRecordsRows([
-                '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 5],
-            ], 'totally_wrong')),
-        );
+        $client = $this->clientReturning($this->appliedRecordsRows([
+            '001_create_demo.sql' => ['2026-06-14 10:00:00.000000', 5],
+        ], 'totally_wrong'));
 
         $statuses = (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->status();
 
@@ -472,21 +398,21 @@ final class ClickHouseMigrationRunnerTest
 
     public function recordsAppliedMigrationsInDefaultTableWhenNoneIsConfigured(): void
     {
-        $trace = $this->bookkeepingTracingClient($queries, $selects, $inserts);
+        $client = $this->tracingClient();
 
-        (new ClickHouseMigrationRunner($trace, self::MIGRATIONS_DIR))->run();
+        (new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR))->run();
 
-        Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `_migrations`');
-        Assert::string($selects[0])->contains('FROM `_migrations`');
-        Assert::same($inserts, ['_migrations', '_migrations']);
+        Assert::string($this->executedQueries($client)[0])->contains('CREATE TABLE IF NOT EXISTS `_migrations`');
+        Assert::string($this->executedSelects($client)[0])->contains('FROM `_migrations`');
+        Assert::same($this->insertedTables($client), ['_migrations', '_migrations']);
     }
 
     public function routesEveryBookkeepingStatementToTheConfiguredTable(): void
     {
-        $trace = $this->bookkeepingTracingClient($queries, $selects, $inserts);
+        $client = $this->tracingClient();
 
         $runner = new ClickHouseMigrationRunner(
-            $trace,
+            $client,
             self::MIGRATIONS_DIR,
             migrationsTable: 'app_schema_migrations',
         );
@@ -494,13 +420,16 @@ final class ClickHouseMigrationRunnerTest
         $runner->run();
         $runner->status();
 
+        $queries = $this->executedQueries($client);
+        $selects = $this->executedSelects($client);
+
         // CREATE (run) + the two migration files + CREATE (status).
         Assert::string($queries[0])->contains('CREATE TABLE IF NOT EXISTS `app_schema_migrations`');
         Assert::string($queries[3])->contains('CREATE TABLE IF NOT EXISTS `app_schema_migrations`');
         // getApplied() for run(), fetchAppliedRecords() for status().
         Assert::string($selects[0])->contains('FROM `app_schema_migrations`');
         Assert::string($selects[1])->contains('FROM `app_schema_migrations`');
-        Assert::same($inserts, ['app_schema_migrations', 'app_schema_migrations']);
+        Assert::same($this->insertedTables($client), ['app_schema_migrations', 'app_schema_migrations']);
         Assert::same(
             array_filter($queries, static fn(string $sql): bool => str_contains($sql, '_migrations`')),
             array_filter($queries, static fn(string $sql): bool => str_contains($sql, 'app_schema_migrations`')),
@@ -515,7 +444,7 @@ final class ClickHouseMigrationRunnerTest
      */
     public function runThrowsWhenMigrationsPathIsNotADirectory(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $client = $this->clientReturning('');
         $path = sys_get_temp_dir() . '/chmigr_absent_' . uniqid('', more_entropy: true);
 
         $runner = new ClickHouseMigrationRunner($client, $path);
@@ -527,7 +456,7 @@ final class ClickHouseMigrationRunnerTest
 
     public function statusThrowsWhenMigrationsPathIsNotADirectory(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $client = $this->clientReturning('');
         $path = sys_get_temp_dir() . '/chmigr_absent_' . uniqid('', more_entropy: true);
 
         $runner = new ClickHouseMigrationRunner($client, $path);
@@ -546,7 +475,7 @@ final class ClickHouseMigrationRunnerTest
         $file = $dir . '/not-a-directory.sql';
         file_put_contents($file, 'CREATE TABLE x (a UInt8) ENGINE = Memory');
 
-        $client = (new FakeClickHouseClient())->withSelectCallback(fn() => $this->chOutput(''));
+        $client = $this->clientReturning('');
         $runner = new ClickHouseMigrationRunner($client, $file);
 
         Expect::exception(ClickHouseMigrationException::class)->withMessageContaining($file);
@@ -570,13 +499,13 @@ final class ClickHouseMigrationRunnerTest
         Classify::cover($valid, 'accepted', 8.0);
         Classify::cover(!$valid, 'rejected', 40.0);
 
-        $trace = $this->bookkeepingTracingClient($queries, $selects, $inserts);
+        $client = $this->tracingClient();
 
         try {
-            $runner = new ClickHouseMigrationRunner($trace, self::MIGRATIONS_DIR, migrationsTable: $table);
+            $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR, migrationsTable: $table);
         } catch (InvalidArgumentException) {
             Assert::false($valid);
-            Assert::same($queries, []);
+            Assert::same($this->executedQueries($client), []);
 
             return;
         }
@@ -586,10 +515,12 @@ final class ClickHouseMigrationRunnerTest
         $runner->run();
         $runner->status();
 
+        $queries = $this->executedQueries($client);
+        $selects = $this->executedSelects($client);
         Assert::string($queries[0])->contains(sprintf('CREATE TABLE IF NOT EXISTS `%s`', $table));
         Assert::string($selects[0])->contains(sprintf('FROM `%s`', $table));
         Assert::string($selects[1])->contains(sprintf('FROM `%s`', $table));
-        Assert::same($inserts, [$table, $table]);
+        Assert::same($this->insertedTables($client), [$table, $table]);
     }
 
     /** @return array<string, ArbitraryInterface> */
@@ -611,54 +542,89 @@ final class ClickHouseMigrationRunnerTest
         yield 'statement break' => ['_migrations`; DROP TABLE users; --'];
     }
 
-    /**
-     * Captures the three places the bookkeeping table name is interpolated:
-     * DDL and migration SQL through executeQuery(), the two bookkeeping reads
-     * through select(), and the INSERT target.
-     *
-     * @param list<string>|null $queries
-     * @param list<string>|null $selects
-     * @param list<string>|null $inserts
-     *
-     * @param-out list<string> $queries
-     * @param-out list<string> $selects
-     * @param-out list<string> $inserts
-     */
-    private function bookkeepingTracingClient(
-        ?array &$queries,
-        ?array &$selects,
-        ?array &$inserts,
-    ): FakeClickHouseClient {
-        $queries = [];
-        $selects = [];
-        $inserts = [];
+    private function logger(): LoggerInterface
+    {
+        $logger = Understudy::for(LoggerInterface::class);
+        $this->infoMessages = Arg::captor();
+        $this->infoContexts = Arg::captor();
 
-        return (new FakeClickHouseClient())
-            ->withExecuteQueryCallback(static function (string $sql) use (&$queries): void {
-                $queries[] = $sql;
-            })
-            ->withSelectCallback(function (string $sql) use (&$selects): Output {
-                $selects[] = $sql;
+        when(fn() => $logger->info($this->infoMessages->capture(), $this->infoContexts->capture()));
 
-                return $this->chOutput('');
-            })
-            ->withInsertCallback(static function (Table|string $table) use (&$inserts): void {
-                $inserts[] = $table instanceof Table ? $table->fullName() : $table;
-            });
+        return $logger;
     }
 
     /**
-     * @param list<string> $queries Captures executeQuery() SQL by reference.
+     * A client whose bookkeeping reads answer with the given rows.
      */
-    private function queryCapturingClient(array &$queries)
+    private function clientReturning(string $rowsJson): ClickHouseClient
     {
-        return (new FakeClickHouseClient())
-            ->withSelectCallback(fn() => $this->chOutput(''))
-            ->withExecuteQueryCallback(
-                static function (string $sql) use (&$queries): void {
-                    $queries[] = $sql;
-                },
-            );
+        $client = Understudy::for(ClickHouseClient::class);
+
+        when(fn() => $client->select(Arg::any(), Arg::any()))->returns($this->chOutput($rowsJson));
+
+        return $client;
+    }
+
+    /**
+     * A client whose bookkeeping reads answer with no rows — for the tests
+     * that read back what the runner sent through the other methods.
+     */
+    private function tracingClient(): ClickHouseClient
+    {
+        return $this->clientReturning('');
+    }
+
+    /** @return list<string> */
+    private function executedQueries(ClickHouseClient $client): array
+    {
+        return array_map(
+            static fn(Invocation $call): string => $call->arg('query'),
+            Understudy::calls(fn() => $client->executeQuery(Arg::any())),
+        );
+    }
+
+    /** @return list<string> */
+    private function executedSelects(ClickHouseClient $client): array
+    {
+        return array_map(
+            static fn(Invocation $call): string => $call->arg('query'),
+            Understudy::calls(fn() => $client->select(Arg::any(), Arg::any())),
+        );
+    }
+
+    /** @return list<string> */
+    private function insertedTables(ClickHouseClient $client): array
+    {
+        return array_map(
+            static fn(Invocation $call): string => $call->arg('table') instanceof Table ? $call->arg('table')->fullName() : $call->arg('table'),
+            Understudy::calls(fn() => $client->insert(Arg::any(), Arg::any())),
+        );
+    }
+
+    /**
+     * @return list<list<array<string, mixed>>>
+     */
+    private function insertedValues(ClickHouseClient $client): array
+    {
+        return array_map(
+            static fn(Invocation $call): array => $call->arg('values'),
+            Understudy::calls(fn() => $client->insert(Arg::any(), Arg::any())),
+        );
+    }
+
+    /**
+     * @return list<array{table: string, values: list<array<string, mixed>>, columns: list<string>}>
+     */
+    private function insertCalls(ClickHouseClient $client): array
+    {
+        return array_map(
+            static fn(Invocation $call): array => [
+                'table' => $call->arg('table'),
+                'values' => $call->arg('values'),
+                'columns' => $call->arg('columns'),
+            ],
+            Understudy::calls(fn() => $client->insert(Arg::any(), Arg::any())),
+        );
     }
 
     private function makeTempDir(): string
