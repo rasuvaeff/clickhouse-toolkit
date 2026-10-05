@@ -6,6 +6,7 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
 use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseTableBuilder;
+use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Expect;
@@ -17,7 +18,7 @@ final class ClickHouseTableBuilderTest
 {
     private function builder(string $table = 'events'): ClickHouseTableBuilder
     {
-        return new ClickHouseTableBuilder(new FakeClickHouseClient(), $table);
+        return new ClickHouseTableBuilder(Clients::plain(), $table);
     }
 
     public function buildsMinimalCreateTable(): void
@@ -34,7 +35,7 @@ final class ClickHouseTableBuilderTest
 
     public function buildsFullCreateTable(): void
     {
-        $sql = ClickHouseTableBuilder::create(new FakeClickHouseClient(), 'analytics.events')
+        $sql = ClickHouseTableBuilder::create(Clients::plain(), 'analytics.events')
             ->ifNotExists()
             ->column('id', 'UInt64')
             ->column('created_at', 'DateTime')
@@ -52,19 +53,14 @@ final class ClickHouseTableBuilderTest
 
     public function executeRunsBuiltSql(): void
     {
-        $capturedQuery = null;
-        $client = (new FakeClickHouseClient())->withExecuteQueryCallback(
-            static function (string $query) use (&$capturedQuery): void {
-                $capturedQuery = $query;
-            },
-        );
+        $client = Clients::plain();
 
         (new ClickHouseTableBuilder($client, 'events'))
             ->column('id', 'UInt64')
             ->engine('Memory')
             ->execute();
 
-        Assert::same($capturedQuery, 'CREATE TABLE events (id UInt64) ENGINE = Memory');
+        Assert::same(Clients::executedQueries($client), ['CREATE TABLE events (id UInt64) ENGINE = Memory']);
     }
 
     public function throwsWithoutColumns(): void
@@ -85,7 +81,7 @@ final class ClickHouseTableBuilderTest
     {
         Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseTableBuilder(new FakeClickHouseClient(), 'events; DROP TABLE x');
+        new ClickHouseTableBuilder(Clients::plain(), 'events; DROP TABLE x');
     }
 
     public function rejectsDbQualifiedColumn(): void

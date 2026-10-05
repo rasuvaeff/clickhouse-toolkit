@@ -6,6 +6,7 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests\Command;
 
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
 use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsRunCommand;
+use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
 use SimPod\ClickHouseClient\Output\JsonEachRow;
 use Symfony\Component\Console\Tester\CommandTester;
 use Testo\Assert;
@@ -67,8 +68,7 @@ final class ClickHouseMigrationsRunCommandTest
             '{"name":"001_a.sql","current_checksum":"%s","variants":1}',
             'wrong',
         );
-        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn() => new JsonEachRow($row));
+        $client = Clients::plain(new JsonEachRow($row));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
@@ -152,8 +152,7 @@ final class ClickHouseMigrationsRunCommandTest
             );
         }
 
-        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn() => new JsonEachRow(implode("\n", $rows)));
+        $client = Clients::plain(new JsonEachRow(implode("\n", $rows)));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
@@ -163,8 +162,7 @@ final class ClickHouseMigrationsRunCommandTest
 
     private function tester(string $dir): CommandTester
     {
-        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn() => new JsonEachRow(''));
+        $client = Clients::plain(new JsonEachRow(''));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsRunCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
