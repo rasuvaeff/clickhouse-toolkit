@@ -7,6 +7,9 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests;
 use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseDataReader;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
+use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
+use Rasuvaeff\Understudy\Invocation;
+use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
 use Testo\Assert;
@@ -32,26 +35,9 @@ final class ClickHouseDataReaderTest
      * @param list<array<string, mixed>> $returnRows
      * @return ClickHouseDataReader<array<string, mixed>>
      */
-    private function reader(array $returnRows, ?string &$capturedSql = null, ?array &$capturedParams = null): ClickHouseDataReader
+    private function reader(array $returnRows, ?ClickHouseClient &$client = null): ClickHouseDataReader
     {
-        $output = $this->makeOutput($returnRows);
-
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(
-                static function (string $sql) use ($output, &$capturedSql): Output {
-                    $capturedSql = $sql;
-
-                    return $output;
-                },
-            )
-            ->withSelectWithParamsCallback(
-                static function (string $sql, array $params) use ($output, &$capturedSql, &$capturedParams): Output {
-                    $capturedSql = $sql;
-                    $capturedParams = $params;
-
-                    return $output;
-                },
-            );
+        $client = Clients::plain($this->makeOutput($returnRows));
 
         return new ClickHouseDataReader(
             client: $client,
@@ -72,11 +58,17 @@ final class ClickHouseDataReaderTest
         return new JsonEachRowOutput(implode("\n", $lines));
     }
 
+    private function lastSelect(ClickHouseClient $client): Invocation
+    {
+        $parameterised = Clients::parameterisedSelects($client);
+
+        return $parameterised !== [] ? $parameterised[array_key_last($parameterised)] : Clients::selects($client)[0];
+    }
+
     public function readReturnsMappedRowsWithPagination(): void
     {
-        $sql = null;
-        $params = null;
-        $reader = $this->reader([['id' => 1, 'status' => 'active'], ['id' => 2, 'status' => 'active']], $sql, $params)
+        $client = null;
+        $reader = $this->reader([['id' => 1, 'status' => 'active'], ['id' => 2, 'status' => 'active']], $client)
             ->withFilter(new Equals('status', 'active'))
             ->withSort(Sort::only(['id'])->withOrder(['id' => 'asc']))
             ->withLimit(10)
@@ -85,30 +77,28 @@ final class ClickHouseDataReaderTest
         $rows = $reader->read();
 
         Assert::same($rows, [['id' => 1, 'status' => 'active'], ['id' => 2, 'status' => 'active']]);
-        Assert::same($sql, 'SELECT id, status FROM events WHERE status = {p0:String} ORDER BY id ASC LIMIT 10 OFFSET 20');
-        Assert::same($params, ['p0' => 'active']);
+        Assert::same($this->lastSelect($client)->arg('query'), 'SELECT id, status FROM events WHERE status = {p0:String} ORDER BY id ASC LIMIT 10 OFFSET 20');
+        Assert::same($this->lastSelect($client)->arg('params'), ['p0' => 'active']);
     }
 
     public function readWithoutLimitOmitsLimitClause(): void
     {
-        $sql = null;
-        $reader = $this->reader([], $sql);
+        $client = null;
+        $reader = $this->reader([], $client);
 
         $reader->read();
 
-        Assert::true(is_string($sql));
-        Assert::string($sql)->contains('SELECT id, status FROM events ORDER BY id DESC');
-        Assert::string($sql)->notContains('LIMIT');
+        Assert::string($this->lastSelect($client)->arg('query'))->contains('SELECT id, status FROM events ORDER BY id DESC');
+        Assert::string($this->lastSelect($client)->arg('query'))->notContains('LIMIT');
     }
 
     public function readOneReturnsFirstRow(): void
     {
-        $sql = null;
-        $reader = $this->reader([['id' => 7, 'status' => 'x']], $sql);
+        $client = null;
+        $reader = $this->reader([['id' => 7, 'status' => 'x']], $client);
 
         Assert::same($reader->readOne(), ['id' => 7, 'status' => 'x']);
-        Assert::true(is_string($sql));
-        Assert::string($sql)->contains('LIMIT 1');
+        Assert::string($this->lastSelect($client)->arg('query'))->contains('LIMIT 1');
     }
 
     public function readOneReturnsNullWhenEmpty(): void
@@ -118,12 +108,11 @@ final class ClickHouseDataReaderTest
 
     public function countReturnsInteger(): void
     {
-        $sql = null;
-        $reader = $this->reader([['cnt' => 42]], $sql);
+        $client = null;
+        $reader = $this->reader([['cnt' => 42]], $client);
 
         Assert::same($reader->count(), 42);
-        Assert::true(is_string($sql));
-        Assert::string($sql)->contains('SELECT count() AS cnt FROM events');
+        Assert::string($this->lastSelect($client)->arg('query'))->contains('SELECT count() AS cnt FROM events');
     }
 
     public function withMethodsAreImmutable(): void
@@ -197,15 +186,13 @@ final class ClickHouseDataReaderTest
 
     public function countAppliesFilterViaSelectWithParams(): void
     {
-        $sql = null;
-        $params = null;
-        $reader = $this->reader([['cnt' => 5]], $sql, $params)
+        $client = null;
+        $reader = $this->reader([['cnt' => 5]], $client)
             ->withFilter(new Equals('status', 'active'));
 
         Assert::same($reader->count(), 5);
-        Assert::same($params, ['p0' => 'active']);
-        Assert::true(is_string($sql));
-        Assert::string($sql)->contains('WHERE status = {p0:String}');
+        Assert::same($this->lastSelect($client)->arg('params'), ['p0' => 'active']);
+        Assert::string($this->lastSelect($client)->arg('query'))->contains('WHERE status = {p0:String}');
     }
 
     public function countReturnsZeroWhenNoRows(): void
@@ -225,9 +212,7 @@ final class ClickHouseDataReaderTest
 
     public function readAppliesMapperToEachRow(): void
     {
-        $client = (new FakeClickHouseClient())->withSelectCallback(
-            fn() => $this->makeOutput([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]),
-        );
+        $client = Clients::plain($this->makeOutput([['id' => 1, 'status' => 'a'], ['id' => 2, 'status' => 'b']]));
 
         $reader = new ClickHouseDataReader(
             client: $client,

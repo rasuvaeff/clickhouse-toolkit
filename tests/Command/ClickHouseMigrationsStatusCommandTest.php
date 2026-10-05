@@ -6,12 +6,18 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests\Command;
 
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
 use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsStatusCommand;
+use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
+use Rasuvaeff\Understudy\Arg;
+use Rasuvaeff\Understudy\Understudy;
+use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow;
 use Symfony\Component\Console\Tester\CommandTester;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Lifecycle\AfterTest;
 use Testo\Test;
+
+use function Rasuvaeff\Understudy\when;
 
 #[Test]
 #[Covers(ClickHouseMigrationsStatusCommand::class)]
@@ -75,10 +81,8 @@ final class ClickHouseMigrationsStatusCommandTest
     {
         $dir = $this->makeTempDirWithTwoMigrations();
 
-        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(static function () {
-                throw new \RuntimeException('server unreachable');
-            });
+        $client = Understudy::for(ClickHouseClient::class);
+        when(fn() => $client->select(Arg::any(), Arg::any()))->throws(new \RuntimeException('server unreachable'));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsStatusCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());
@@ -138,8 +142,7 @@ final class ClickHouseMigrationsStatusCommandTest
 
     private function tester(string $dir, string $chRows): CommandTester
     {
-        $client = (new \Rasuvaeff\ClickHouseToolkit\Tests\FakeClickHouseClient())
-            ->withSelectCallback(fn() => new JsonEachRow($chRows));
+        $client = Clients::plain(new JsonEachRow($chRows));
         $runner = new ClickHouseMigrationRunner($client, $dir);
         $command = new ClickHouseMigrationsStatusCommand($runner);
         $command->setApplication(new \Symfony\Component\Console\Application());

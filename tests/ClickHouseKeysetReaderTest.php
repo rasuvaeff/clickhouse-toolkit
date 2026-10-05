@@ -8,6 +8,11 @@ use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseKeysetReader;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
+use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
+use Rasuvaeff\Understudy\Arg;
+use Rasuvaeff\Understudy\Invocation;
+use Rasuvaeff\Understudy\Understudy;
+use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use SimPod\ClickHouseClient\Output\Output;
 use Testo\Assert;
@@ -16,6 +21,8 @@ use Testo\Expect;
 use Testo\Test;
 use Yiisoft\Data\Reader\Filter\Equals;
 use Yiisoft\Data\Reader\FilterInterface;
+
+use function Rasuvaeff\Understudy\when;
 
 #[Test]
 #[Covers(ClickHouseKeysetReader::class)]
@@ -39,48 +46,48 @@ final class ClickHouseKeysetReaderTest
 
     public function firstPageHasNoBoundaryAndLaterPagesSeekPastLastKey(): void
     {
-        $calls = [];
+        $client = null;
         $reader = $this->reader(
             pages: [[['id' => 1], ['id' => 2]], [['id' => 3], ['id' => 4]], [['id' => 5]]],
             pageSize: 2,
-            calls: $calls,
+            client: $client,
         );
 
         iterator_to_array($reader->stream());
 
-        Assert::same(count($calls), 3);
-        Assert::same($calls[0]['params'], []);
-        Assert::string($calls[0]['sql'])->contains('ORDER BY id ASC');
-        Assert::string($calls[0]['sql'])->contains('LIMIT 2 OFFSET 0');
-        Assert::string($calls[1]['sql'])->contains('id > {ck0:UInt64}');
-        Assert::same($calls[1]['params'], ['ck0' => 2]);
-        Assert::same($calls[2]['params'], ['ck0' => 4]);
+        Assert::same(count($this->calls($client)), 3);
+        Assert::same($this->calls($client)[0]['params'], []);
+        Assert::string($this->calls($client)[0]['sql'])->contains('ORDER BY id ASC');
+        Assert::string($this->calls($client)[0]['sql'])->contains('LIMIT 2 OFFSET 0');
+        Assert::string($this->calls($client)[1]['sql'])->contains('id > {ck0:UInt64}');
+        Assert::same($this->calls($client)[1]['params'], ['ck0' => 2]);
+        Assert::same($this->calls($client)[2]['params'], ['ck0' => 4]);
     }
 
     public function stopsWhenPageSmallerThanPageSize(): void
     {
-        $calls = [];
-        $reader = $this->reader(pages: [[['id' => 1]]], pageSize: 2, calls: $calls);
+        $client = null;
+        $reader = $this->reader(pages: [[['id' => 1]]], pageSize: 2, client: $client);
 
         iterator_to_array($reader->stream());
 
-        Assert::same(count($calls), 1);
+        Assert::same(count($this->calls($client)), 1);
     }
 
     public function stopsAfterExactMultipleWithEmptyTailPage(): void
     {
-        $calls = [];
-        $reader = $this->reader(pages: [[['id' => 1], ['id' => 2]], []], pageSize: 2, calls: $calls);
+        $client = null;
+        $reader = $this->reader(pages: [[['id' => 1], ['id' => 2]], []], pageSize: 2, client: $client);
 
         $ids = array_map(static fn(array $row): int => (int) $row['id'], iterator_to_array($reader->stream(), preserve_keys: false));
 
         Assert::same($ids, [1, 2]);
-        Assert::same(count($calls), 2);
+        Assert::same(count($this->calls($client)), 2);
     }
 
     public function compositeKeyUsesTupleComparison(): void
     {
-        $calls = [];
+        $client = null;
         $reader = $this->reader(
             pages: [
                 [['created_at' => '2024-01-01 00:00:00', 'id' => 1]],
@@ -88,63 +95,63 @@ final class ClickHouseKeysetReaderTest
             ],
             pageSize: 1,
             keyColumns: ['created_at' => 'DateTime', 'id' => 'UInt64'],
-            calls: $calls,
+            client: $client,
         );
 
         iterator_to_array($reader->stream());
 
-        Assert::string($calls[0]['sql'])->contains('ORDER BY created_at ASC, id ASC');
-        Assert::string($calls[1]['sql'])->contains('(created_at, id) > ({ck0:DateTime}, {ck1:UInt64})');
-        Assert::same($calls[1]['params'], ['ck0' => '2024-01-01 00:00:00', 'ck1' => 1]);
+        Assert::string($this->calls($client)[0]['sql'])->contains('ORDER BY created_at ASC, id ASC');
+        Assert::string($this->calls($client)[1]['sql'])->contains('(created_at, id) > ({ck0:DateTime}, {ck1:UInt64})');
+        Assert::same($this->calls($client)[1]['params'], ['ck0' => '2024-01-01 00:00:00', 'ck1' => 1]);
     }
 
     public function keyColumnsAreAddedToProjection(): void
     {
-        $calls = [];
+        $client = null;
         $reader = $this->reader(
             pages: [[['id' => 1, 'name' => 'a']]],
             pageSize: 2,
             columns: ['name'],
-            calls: $calls,
+            client: $client,
         );
 
         iterator_to_array($reader->stream());
 
-        Assert::string($calls[0]['sql'])->contains('SELECT name, id FROM');
+        Assert::string($this->calls($client)[0]['sql'])->contains('SELECT name, id FROM');
     }
 
     public function keyColumnAlreadyInProjectionIsNotDuplicated(): void
     {
-        $calls = [];
+        $client = null;
         $reader = $this->reader(
             pages: [[['id' => 1, 'name' => 'a']]],
             pageSize: 2,
             columns: ['id', 'name'],
-            calls: $calls,
+            client: $client,
         );
 
         iterator_to_array($reader->stream());
 
-        Assert::string($calls[0]['sql'])->contains('SELECT id, name FROM');
+        Assert::string($this->calls($client)[0]['sql'])->contains('SELECT id, name FROM');
     }
 
     public function appliesBaseFilterOnEveryPage(): void
     {
-        $calls = [];
+        $client = null;
         $reader = $this->reader(
             pages: [[['id' => 1], ['id' => 2]], [['id' => 3]]],
             pageSize: 2,
             filter: new Equals('status', 'active'),
-            calls: $calls,
+            client: $client,
         );
 
         iterator_to_array($reader->stream());
 
-        Assert::string($calls[0]['sql'])->contains('status =');
-        Assert::same($calls[0]['params'], ['p0' => 'active']);
-        Assert::string($calls[1]['sql'])->contains('status =');
-        Assert::string($calls[1]['sql'])->contains('id > {ck0:UInt64}');
-        Assert::same($calls[1]['params'], ['p0' => 'active', 'ck0' => 2]);
+        Assert::string($this->calls($client)[0]['sql'])->contains('status =');
+        Assert::same($this->calls($client)[0]['params'], ['p0' => 'active']);
+        Assert::string($this->calls($client)[1]['sql'])->contains('status =');
+        Assert::string($this->calls($client)[1]['sql'])->contains('id > {ck0:UInt64}');
+        Assert::same($this->calls($client)[1]['params'], ['p0' => 'active', 'ck0' => 2]);
     }
 
     /**
@@ -153,19 +160,19 @@ final class ClickHouseKeysetReaderTest
      */
     public function baseFilterMayUseTheBoundaryParameterName(): void
     {
-        $calls = [];
+        $client = null;
         $reader = $this->reader(
             pages: [[['id' => 1], ['id' => 2]], [['id' => 3]]],
             pageSize: 2,
             filter: new ClickHouseRawFilter('id >= {ck0:UInt64}', ['ck0' => 1]),
-            calls: $calls,
+            client: $client,
         );
 
         iterator_to_array($reader->stream());
 
-        Assert::string($calls[1]['sql'])->contains('id >= {ck0:UInt64}');
-        Assert::string($calls[1]['sql'])->contains('id > {ck0_0:UInt64}');
-        Assert::same($calls[1]['params'], ['ck0' => 1, 'ck0_0' => 2]);
+        Assert::string($this->calls($client)[1]['sql'])->contains('id >= {ck0:UInt64}');
+        Assert::string($this->calls($client)[1]['sql'])->contains('id > {ck0_0:UInt64}');
+        Assert::same($this->calls($client)[1]['params'], ['ck0' => 1, 'ck0_0' => 2]);
     }
 
     public function appliesMapperToEachRow(): void
@@ -198,7 +205,7 @@ final class ClickHouseKeysetReaderTest
         Expect::exception(InvalidArgumentException::class);
 
         new ClickHouseKeysetReader(
-            client: new FakeClickHouseClient(),
+            client: Clients::plain(),
             table: 'events; DROP TABLE x',
             queryBuilder: $this->queryBuilder(),
             mapper: static fn(array $row): array => $row,
@@ -211,7 +218,7 @@ final class ClickHouseKeysetReaderTest
         Expect::exception(InvalidArgumentException::class);
 
         new ClickHouseKeysetReader(
-            client: new FakeClickHouseClient(),
+            client: Clients::plain(),
             table: 'events',
             queryBuilder: $this->queryBuilder(),
             mapper: static fn(array $row): array => $row,
@@ -224,7 +231,7 @@ final class ClickHouseKeysetReaderTest
         Expect::exception(InvalidArgumentException::class);
 
         new ClickHouseKeysetReader(
-            client: new FakeClickHouseClient(),
+            client: Clients::plain(),
             table: 'events',
             queryBuilder: $this->queryBuilder(),
             mapper: static fn(array $row): array => $row,
@@ -238,7 +245,7 @@ final class ClickHouseKeysetReaderTest
         Expect::exception(InvalidArgumentException::class);
 
         new ClickHouseKeysetReader(
-            client: new FakeClickHouseClient(),
+            client: Clients::plain(),
             table: 'events',
             queryBuilder: $this->queryBuilder(),
             mapper: static fn(array $row): array => $row,
@@ -258,7 +265,6 @@ final class ClickHouseKeysetReaderTest
      * @param list<list<array<string, mixed>>> $pages
      * @param array<string, string> $keyColumns
      * @param list<string> $columns
-     * @param list<array{sql: string, params: array<string, mixed>}> $calls
      * @return ClickHouseKeysetReader<mixed>
      */
     private function reader(
@@ -268,7 +274,7 @@ final class ClickHouseKeysetReaderTest
         array $columns = [],
         ?FilterInterface $filter = null,
         ?\Closure $mapper = null,
-        array &$calls = [],
+        ?ClickHouseClient & $client = null,
     ): ClickHouseKeysetReader {
         $index = 0;
         $make = static function (array $rows): Output {
@@ -277,21 +283,12 @@ final class ClickHouseKeysetReaderTest
             return new JsonEachRowOutput(implode("\n", $lines));
         };
 
-        $client = (new FakeClickHouseClient())
-            ->withSelectCallback(
-                static function (string $sql) use (&$index, $pages, &$calls, $make): Output {
-                    $calls[] = ['sql' => $sql, 'params' => []];
-
-                    return $make($pages[$index++] ?? []);
-                },
-            )
-            ->withSelectWithParamsCallback(
-                static function (string $sql, array $params) use (&$index, $pages, &$calls, $make): Output {
-                    $calls[] = ['sql' => $sql, 'params' => $params];
-
-                    return $make($pages[$index++] ?? []);
-                },
-            );
+        $client = Understudy::for(ClickHouseClient::class);
+        $nextPage = static function () use (&$index, $pages, $make): Output {
+            return $make($pages[$index++] ?? []);
+        };
+        when(fn() => $client->select(Arg::any(), Arg::any()))->answers($nextPage);
+        when(fn() => $client->selectWithParams(Arg::any(), Arg::any(), Arg::any()))->answers($nextPage);
 
         return new ClickHouseKeysetReader(
             client: $client,
@@ -302,6 +299,23 @@ final class ClickHouseKeysetReaderTest
             columns: $columns,
             pageSize: $pageSize,
             filter: $filter,
+        );
+    }
+
+    /**
+     * @return list<array{sql: string, params: array<string, mixed>}> every read the reader issued, in order
+     */
+    private function calls(ClickHouseClient $client): array
+    {
+        $invocations = [...Clients::selects($client), ...Clients::parameterisedSelects($client)];
+        usort($invocations, static fn(Invocation $a, Invocation $b): int => $a->sequence <=> $b->sequence);
+
+        return array_map(
+            static fn(Invocation $call): array => [
+                'sql' => $call->arg('query'),
+                'params' => $call->method === 'select' ? [] : $call->arg('params'),
+            ],
+            $invocations,
         );
     }
 }

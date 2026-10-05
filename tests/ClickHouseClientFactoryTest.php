@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests;
 
-use GuzzleHttp\Psr7\Response;
 use Psr\Http\Message\RequestInterface;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseClientFactory;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseConfig;
+use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Test;
@@ -18,14 +18,7 @@ final class ClickHouseClientFactoryTest
 {
     public function createReturnsClientWithInjectedHttpLayer(): void
     {
-        $captured = null;
-        $httpClient = (new FakePsrHttpClient())->withSendRequestCallback(
-            static function (RequestInterface $request) use (&$captured) {
-                $captured = $request;
-
-                return new Response(200, [], 'Ok.');
-            },
-        );
+        $httpClient = Clients::http();
 
         $config = new ClickHouseConfig(
             host: 'ch.internal',
@@ -48,7 +41,7 @@ final class ClickHouseClientFactoryTest
 
         $client->executeQuery('SELECT 1');
 
-        Assert::instanceOf($captured, RequestInterface::class);
+        $captured = Clients::sentRequests($httpClient)[0];
         Assert::same($captured->getHeaderLine('X-ClickHouse-User'), 'admin');
         Assert::same($captured->getHeaderLine('X-ClickHouse-Key'), 'secret');
         Assert::same($captured->getHeaderLine('X-ClickHouse-Database'), 'testdb');
@@ -57,14 +50,7 @@ final class ClickHouseClientFactoryTest
 
     public function createWithHttpScheme(): void
     {
-        $captured = null;
-        $httpClient = (new FakePsrHttpClient())->withSendRequestCallback(
-            static function (RequestInterface $request) use (&$captured) {
-                $captured = $request;
-
-                return new Response(200, [], 'Ok.');
-            },
-        );
+        $httpClient = Clients::http();
 
         $factory = new ClickHouseClientFactory(
             config: new ClickHouseConfig(host: 'localhost', port: 8123),
@@ -76,7 +62,7 @@ final class ClickHouseClientFactoryTest
 
         $factory->create()->executeQuery('SELECT 1');
 
-        Assert::instanceOf($captured, RequestInterface::class);
+        $captured = Clients::sentRequests($httpClient)[0];
         Assert::string((string) $captured->getUri())->contains('http://localhost:8123');
     }
 
@@ -87,9 +73,7 @@ final class ClickHouseClientFactoryTest
         $calls->streamFactory = false;
         $calls->uriFactory = false;
         $inner = new \GuzzleHttp\Psr7\HttpFactory();
-        $httpClient = (new FakePsrHttpClient())->withSendRequestCallback(
-            static fn() => new Response(200, [], 'Ok.'),
-        );
+        $httpClient = Clients::http();
 
         $requestFactory = new readonly class ($calls, $inner) implements \Psr\Http\Message\RequestFactoryInterface {
             public function __construct(

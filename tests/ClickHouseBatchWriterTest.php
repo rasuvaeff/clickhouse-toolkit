@@ -7,11 +7,18 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests;
 use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseBatchWriter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseWriteException;
+use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
+use Rasuvaeff\Understudy\Arg;
+use Rasuvaeff\Understudy\Invocation;
+use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Schema\Table;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Expect;
 use Testo\Test;
+
+use function Rasuvaeff\Understudy\verify;
+use function Rasuvaeff\Understudy\when;
 
 #[Test]
 #[Covers(ClickHouseBatchWriter::class)]
@@ -20,138 +27,99 @@ final class ClickHouseBatchWriterTest
 {
     public function splitsRowsIntoFixedSizeBatches(): void
     {
-        $sizes = [];
-        $tables = [];
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (Table|string $table, array $values) use (&$sizes, &$tables): void {
-                $tables[] = $table;
-                $sizes[] = count($values);
-            },
-        );
+        $client = Clients::plain();
 
         $writer = new ClickHouseBatchWriter($client, 'events', ['id'], batchSize: 1000);
         $writer->write($this->rows(2500));
 
-        Assert::same($sizes, [1000, 1000, 500]);
-        Assert::same($tables, ['events', 'events', 'events']);
+        Assert::same($this->batchSizes($client), [1000, 1000, 500]);
+        Assert::same(array_map(Clients::insertedTable(...), Clients::inserts($client)), ['events', 'events', 'events']);
     }
 
     public function projectsRowsOntoDeclaredColumns(): void
     {
-        $captured = [];
-        $columns = [];
-        $table = null;
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (Table|string $t, array $values, ?array $cols) use (&$captured, &$columns, &$table): void {
-                $table = $t;
-                $captured = $values;
-                $columns = $cols;
-            },
-        );
+        $client = Clients::plain();
 
         $writer = new ClickHouseBatchWriter($client, 'events', ['id', 'name', 'missing']);
         $writer->write([['id' => 1, 'name' => 'a', 'extra' => 'ignored']]);
 
-        Assert::same($table, 'events');
-        Assert::same($captured, [['id' => 1, 'name' => 'a', 'missing' => null]]);
-        Assert::same($columns, ['id', 'name', 'missing']);
+        $insert = Clients::inserts($client)[0];
+        Assert::same(Clients::insertedTable($insert), 'events');
+        Assert::same($insert->arg('values'), [['id' => 1, 'name' => 'a', 'missing' => null]]);
+        Assert::same($insert->arg('columns'), ['id', 'name', 'missing']);
     }
 
     public function doesNotInsertWhenNoRows(): void
     {
-        $insertCalled = false;
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function () use (&$insertCalled): void {
-                $insertCalled = true;
-            },
-        );
+        $client = Clients::plain();
 
         (new ClickHouseBatchWriter($client, 'events', ['id']))->write([]);
 
-        Assert::false($insertCalled);
+        verify(fn() => $client->insert(Arg::any(), Arg::any()), never: true);
     }
 
     public function allowsBatchSizeOne(): void
     {
-        $sizes = [];
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (Table|string $table, array $values) use (&$sizes): void {
-                $sizes[] = count($values);
-            },
-        );
+        $client = Clients::plain();
 
         (new ClickHouseBatchWriter($client, 'events', ['id'], batchSize: 1))->write([['id' => 1], ['id' => 2]]);
 
-        Assert::same($sizes, [1, 1]);
+        Assert::same($this->batchSizes($client), [1, 1]);
     }
 
     public function defaultBatchSizeIsOneThousand(): void
     {
-        $sizes = [];
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (Table|string $table, array $values) use (&$sizes): void {
-                $sizes[] = count($values);
-            },
-        );
+        $client = Clients::plain();
 
         (new ClickHouseBatchWriter($client, 'events', ['id']))->write($this->rows(1001));
 
-        Assert::same($sizes, [1000, 1]);
+        Assert::same($this->batchSizes($client), [1000, 1]);
     }
 
     public function rejectsNonPositiveBatchSize(): void
     {
         Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseBatchWriter(new FakeClickHouseClient(), 'events', ['id'], batchSize: 0);
+        new ClickHouseBatchWriter(Clients::plain(), 'events', ['id'], batchSize: 0);
     }
 
     public function rejectsMalformedTable(): void
     {
         Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseBatchWriter(new FakeClickHouseClient(), 'events; DROP TABLE x', ['id']);
+        new ClickHouseBatchWriter(Clients::plain(), 'events; DROP TABLE x', ['id']);
     }
 
     public function rejectsMalformedColumn(): void
     {
         Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseBatchWriter(new FakeClickHouseClient(), 'events', ['id', 'name) --']);
+        new ClickHouseBatchWriter(Clients::plain(), 'events', ['id', 'name) --']);
     }
 
     public function rejectsDbQualifiedColumn(): void
     {
         Expect::exception(InvalidArgumentException::class);
 
-        new ClickHouseBatchWriter(new FakeClickHouseClient(), 'events', ['events.id']);
+        new ClickHouseBatchWriter(Clients::plain(), 'events', ['events.id']);
     }
 
     public function plainTableIsPassedAsString(): void
     {
-        $captured = 'unset';
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (Table|string $table) use (&$captured): void {
-                $captured = $table;
-            },
-        );
+        $client = Clients::plain();
 
         (new ClickHouseBatchWriter($client, 'events', ['id']))->write([['id' => 1]]);
 
-        Assert::same($captured, 'events');
+        Assert::same(Clients::insertedTable(Clients::inserts($client)[0]), 'events');
     }
 
     public function dbQualifiedTableIsSplitIntoDatabaseAndName(): void
     {
-        $captured = null;
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (Table|string $table) use (&$captured): void {
-                $captured = $table;
-            },
-        );
+        $client = Clients::plain();
 
         (new ClickHouseBatchWriter($client, 'analytics.events', ['id']))->write([['id' => 1]]);
 
+        $captured = Clients::insertedTable(Clients::inserts($client)[0]);
         Assert::instanceOf($captured, Table::class);
         Assert::same($captured->name, 'events');
         Assert::same($captured->database, 'analytics');
@@ -159,12 +127,7 @@ final class ClickHouseBatchWriterTest
 
     public function appliesSettingsToEveryBatch(): void
     {
-        $seen = [];
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (Table|string $table, array $values, ?array $columns, array $settings) use (&$seen): void {
-                $seen[] = $settings;
-            },
-        );
+        $client = Clients::plain();
 
         $writer = new ClickHouseBatchWriter(
             $client,
@@ -175,7 +138,7 @@ final class ClickHouseBatchWriterTest
         );
         $writer->write($this->rows(1500));
 
-        Assert::same($seen, [
+        Assert::same(array_map(static fn(Invocation $insert): mixed => $insert->arg('settings'), Clients::inserts($client)), [
             ['async_insert' => 1, 'wait_for_async_insert' => 0],
             ['async_insert' => 1, 'wait_for_async_insert' => 0],
         ]);
@@ -183,31 +146,34 @@ final class ClickHouseBatchWriterTest
 
     public function defaultsToEmptySettings(): void
     {
-        $captured = 'unset';
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (Table|string $table, array $values, ?array $columns, array $settings) use (&$captured): void {
-                $captured = $settings;
-            },
-        );
+        $client = Clients::plain();
 
         (new ClickHouseBatchWriter($client, 'events', ['id']))->write([['id' => 1]]);
 
-        Assert::same($captured, []);
+        Assert::same(Clients::inserts($client)[0]->arg('settings'), []);
     }
 
     public function wrapsClientFailures(): void
     {
-        $client = (new FakeClickHouseClient())->withInsertCallback(
-            static function (): void {
-                throw new \RuntimeException('connection refused');
-            },
-        );
+        $client = Clients::plain();
+        when(fn() => $client->insert(Arg::any(), Arg::any()))->throws(new \RuntimeException('connection refused'));
 
         $writer = new ClickHouseBatchWriter($client, 'events', ['id']);
 
         Expect::exception(ClickHouseWriteException::class);
 
         $writer->write([['id' => 1]]);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function batchSizes(ClickHouseClient $client): array
+    {
+        return array_map(
+            static fn(Invocation $insert): int => count($insert->arg('values')),
+            Clients::inserts($client),
+        );
     }
 
     /**
