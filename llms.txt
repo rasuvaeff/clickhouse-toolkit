@@ -46,6 +46,21 @@ $client = (new ClickHouseClientFactory(new ClickHouseConfig(
 `ClickHouseConfig` validates host/port(1-65535); IPv6 hosts are bracketed.
 Auth + database go in `X-ClickHouse-*` headers, never the URL.
 
+## Context integration
+
+`ContextClickHouseClient` decorates a `ClickHouseClient` with
+`rasuvaeff/context`. It checks `assertActive()` before and after every
+operation and adds `max_execution_time = ceil(remainingMs / 1000)` (minimum
+one second) to ClickHouse settings. The HTTP client's own timeout and socket
+cancellation remain transport responsibilities.
+
+```php
+[$ctx, $controller] = Rasuvaeff\Context\Context::background()->withTimeout(2.0);
+$client = new Rasuvaeff\ClickHouseToolkit\ContextClickHouseClient($client, $ctx);
+$client->executeQuery('SELECT 1');
+$controller->cancel();
+```
+
 ## Query builder
 
 ```php

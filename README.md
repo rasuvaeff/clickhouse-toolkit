@@ -58,6 +58,7 @@ Built on top of [`simpod/clickhouse-client`](https://github.com/simPod/clickhous
   - [ClickHouseDataType](#clickhousedatatype)
   - [ClickHouseMigrationRunner](#clickhousemigrationrunner)
   - [ClickHouseMigrationGenerator & status()](#clickhousemigrationgenerator--status)
+  - [Context-aware ClickHouse client](#context-aware-clickhouse-client)
   - [Console commands](#console-commands)
   - [Interfaces](#interfaces)
   - [Timezone handling](#timezone-handling)
@@ -133,6 +134,29 @@ foreach ($output->data as $row) {
 ```
 
 ## Components
+
+### Context-aware ClickHouse client
+
+Install [`rasuvaeff/context`](https://packagist.org/packages/rasuvaeff/context)
+to connect ClickHouse work to a request or job deadline:
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ContextClickHouseClient;
+use Rasuvaeff\Context\Context;
+use SimPod\ClickHouseClient\Format\JsonEachRow;
+
+[$context, $controller] = Context::background()->withTimeout(2.0);
+$client = new ContextClickHouseClient($clickHouseClient, $context);
+$rows = $client->select('SELECT * FROM events', new JsonEachRow());
+$controller->cancel();
+```
+
+Each operation checks the context before and after the call. The remaining
+budget is passed as ClickHouse's `max_execution_time` setting (in seconds,
+rounded up, with a minimum of one second). HTTP transport timeouts remain the
+responsibility of the PSR-18 client. This is cooperative at the PHP boundary;
+use an HTTP client that closes its request when the context is cancelled if
+in-flight socket cancellation is required.
 
 ### `ClickHouseConfig` & `ClickHouseClientFactory`
 

@@ -47,6 +47,11 @@ partitions, mutations and file migrations. Namespace `Rasuvaeff\ClickHouseToolki
    its `keyColumns` must form a unique ascending total order — add `id` as a
    tie-breaker for non-unique sort columns.
 
+6. **Context integration is cooperative.** `ContextClickHouseClient` checks
+   before and after every operation and maps the remaining budget to
+   `max_execution_time` without expanding a stricter caller setting. It does
+   not claim to close an arbitrary in-flight synchronous HTTP socket.
+
 ## Canonical usage
 
 ```php
