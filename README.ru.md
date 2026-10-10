@@ -57,6 +57,7 @@ $sql = $qb->buildSelect(table: 'events', where: $where->sql, limit: 20);
   - [ClickHouseDataType](#clickhousedatatype)
   - [ClickHouseMigrationRunner](#clickhousemigrationrunner)
   - [ClickHouseMigrationGenerator & status()](#clickhousemigrationgenerator--status)
+  - [Клиент ClickHouse с контекстом](#клиент-clickhouse-с-контекстом)
   - [Консольные команды](#консольные-команды)
   - [Интерфейсы](#интерфейсы)
   - [Работа с часовыми поясами](#работа-с-часовыми-поясами)
@@ -132,6 +133,28 @@ foreach ($output->data as $row) {
 ```
 
 ## Компоненты
+
+### Клиент ClickHouse с контекстом
+
+Установите [`rasuvaeff/context`](https://packagist.org/packages/rasuvaeff/context),
+чтобы связать запрос или job с дедлайном:
+
+```php
+use Rasuvaeff\ClickHouseToolkit\ContextClickHouseClient;
+use Rasuvaeff\Context\Context;
+use SimPod\ClickHouseClient\Format\JsonEachRow;
+
+[$context, $controller] = Context::background()->withTimeout(2.0);
+$client = new ContextClickHouseClient($clickHouseClient, $context);
+$rows = $client->select('SELECT * FROM events', new JsonEachRow());
+$controller->cancel();
+```
+
+Каждая операция проверяет контекст до и после вызова. Оставшийся бюджет
+передаётся в настройку ClickHouse `max_execution_time` (секунды, округление
+вверх, минимум одна секунда). Таймаут HTTP-транспорта остаётся ответственностью
+PSR-18-клиента. Проверки кооперативные; для отмены уже открытого сокета нужен
+HTTP-клиент, который умеет закрывать запрос при отмене контекста.
 
 ### `ClickHouseConfig` & `ClickHouseClientFactory`
 

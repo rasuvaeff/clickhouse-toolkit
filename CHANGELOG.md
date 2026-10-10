@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.0 — 2026-10-10
+
+- Added `ContextClickHouseClient`, which checks a `rasuvaeff/context` deadline
+  around every operation and maps its remaining budget to ClickHouse's native
+  `max_execution_time` setting.
+
 ## 1.9.0 — 2026-09-13
 
 ### Fixed
