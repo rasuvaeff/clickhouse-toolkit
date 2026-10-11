@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.10.1 — 2026-10-11
+
+- Allow `rasuvaeff/context` ^0.2 (`^0.1 || ^0.2`), so the package installs next to `rasuvaeff/context-http` 0.2. No code changes: the package does not use `Context::onTerminate()`, the only API change in context 0.2.
+
 ## 1.10.0 — 2026-10-10
 
 - Added `ContextClickHouseClient`, which checks a `rasuvaeff/context` deadline
