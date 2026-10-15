@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.11.0 — 2026-10-15
+
+- Fixed: `ContextClickHouseClient` rounded the remaining budget up to whole
+  seconds (1.2 s left became 2 s), and turned a configured
+  `max_execution_time => 0` (unlimited) into 1 second. The budget is now passed
+  in fractional seconds; a looser or unlimited configured value is replaced
+  by it (#41).
+- Fixed: a deadline passing between the check and reading the budget could
+  produce `max_execution_time = 0`, i.e. unlimited; the budget is now read
+  before the check.
+- Added: `ContextClickHouseClient` sets
+  `cancel_http_readonly_queries_on_client_close=1` unless the caller set it, so
+  the server stops a read-only query when the HTTP client gives up (#42).
+
 ## 1.10.1 — 2026-10-11
 
 - Allow `rasuvaeff/context` ^0.2 (`^0.1 || ^0.2`), so the package installs next to `rasuvaeff/context-http` 0.2. No code changes: the package does not use `Context::onTerminate()`, the only API change in context 0.2.

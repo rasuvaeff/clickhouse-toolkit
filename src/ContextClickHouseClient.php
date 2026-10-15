@@ -28,8 +28,8 @@ final readonly class ContextClickHouseClient implements ClickHouseClient
     /** @param array<string, float|int|string> $settings */
     public function executeQuery(string $query, array $settings = []): void
     {
-        $this->before();
-        $this->client->executeQuery($query, $this->settings($settings));
+        $settings = $this->prepare($settings);
+        $this->client->executeQuery($query, $settings);
         $this->after();
     }
 
@@ -37,8 +37,8 @@ final readonly class ContextClickHouseClient implements ClickHouseClient
     /** @param array<string, float|int|string> $settings */
     public function executeQueryWithParams(string $query, array $params, array $settings = []): void
     {
-        $this->before();
-        $this->client->executeQueryWithParams($query, $params, $this->settings($settings));
+        $settings = $this->prepare($settings);
+        $this->client->executeQueryWithParams($query, $params, $settings);
         $this->after();
     }
 
@@ -46,8 +46,8 @@ final readonly class ContextClickHouseClient implements ClickHouseClient
     /** @param array<string, float|int|string> $settings */
     public function select(string $query, Format $outputFormat, array $settings = []): Output
     {
-        $this->before();
-        $result = $this->client->select($query, $outputFormat, $this->settings($settings));
+        $settings = $this->prepare($settings);
+        $result = $this->client->select($query, $outputFormat, $settings);
         $this->after();
 
         return $result;
@@ -57,8 +57,8 @@ final readonly class ContextClickHouseClient implements ClickHouseClient
     /** @param array<string, float|int|string> $settings */
     public function selectWithParams(string $query, array $params, Format $outputFormat, array $settings = []): Output
     {
-        $this->before();
-        $result = $this->client->selectWithParams($query, $params, $outputFormat, $this->settings($settings));
+        $settings = $this->prepare($settings);
+        $result = $this->client->selectWithParams($query, $params, $outputFormat, $settings);
         $this->after();
 
         return $result;
@@ -68,8 +68,8 @@ final readonly class ContextClickHouseClient implements ClickHouseClient
     /** @param array<string, float|int|string> $settings */
     public function insert(Table|string $table, array $values, ?array $columns = null, array $settings = []): void
     {
-        $this->before();
-        $this->client->insert($table, $values, $columns, $this->settings($settings));
+        $settings = $this->prepare($settings);
+        $this->client->insert($table, $values, $columns, $settings);
         $this->after();
     }
 
@@ -77,8 +77,8 @@ final readonly class ContextClickHouseClient implements ClickHouseClient
     /** @param array<string, float|int|string> $settings */
     public function insertWithFormat(Table|string $table, Format $inputFormat, string $data, array $settings = []): void
     {
-        $this->before();
-        $this->client->insertWithFormat($table, $inputFormat, $data, $this->settings($settings));
+        $settings = $this->prepare($settings);
+        $this->client->insertWithFormat($table, $inputFormat, $data, $settings);
         $this->after();
     }
 
@@ -91,8 +91,8 @@ final readonly class ContextClickHouseClient implements ClickHouseClient
         array $columns = [],
         array $settings = [],
     ): void {
-        $this->before();
-        $this->client->insertPayload($table, $inputFormat, $payload, $columns, $this->settings($settings));
+        $settings = $this->prepare($settings);
+        $this->client->insertPayload($table, $inputFormat, $payload, $columns, $settings);
         $this->after();
     }
 
@@ -104,19 +104,36 @@ final readonly class ContextClickHouseClient implements ClickHouseClient
     {
         $remaining = $this->context->remainingMs();
         if ($remaining !== null) {
-            $budgetSeconds = max(1, (int) ceil($remaining / 1000.0));
+            // ClickHouse accepts fractional seconds; remainingMs() is at
+            // least 1 ms while active, so the budget never becomes 0
+            // ("unlimited"). A configured 0 or negative value is unlimited too.
+            $budgetSeconds = $remaining / 1000.0;
             $configured = $settings['max_execution_time'] ?? null;
-            $settings['max_execution_time'] = is_numeric($configured)
-                ? min($budgetSeconds, max(1, (int) $configured))
-                : $budgetSeconds;
+            $stricter = is_numeric($configured) && (float) $configured > 0.0 && (float) $configured <= $budgetSeconds;
+            $settings['max_execution_time'] = $stricter ? $configured : $budgetSeconds;
         }
+
+        // Lets the server stop a read-only query once the HTTP client gives
+        // up and closes the connection; ignored for writes.
+        $settings['cancel_http_readonly_queries_on_client_close'] ??= 1;
 
         return $settings;
     }
 
-    private function before(): void
+    /**
+     * The budget is read before the check: once assertActive() passes it
+     * cannot be the 0.0 of an expired context, which ClickHouse would take
+     * as an unlimited max_execution_time.
+     *
+     * @param array<string, float|int|string> $settings
+     * @return array<string, float|int|string>
+     */
+    private function prepare(array $settings): array
     {
+        $settings = $this->settings($settings);
         $this->context->assertActive();
+
+        return $settings;
     }
 
     private function after(): void
