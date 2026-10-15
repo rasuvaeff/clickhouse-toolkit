@@ -17,7 +17,10 @@ use Rasuvaeff\ClickHouseToolkit\ClickHousePartitionManager;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseTableBuilder;
+use Rasuvaeff\ClickHouseToolkit\ContextClickHouseClient;
+use Rasuvaeff\Context\Context;
 use SimPod\ClickHouseClient\Client\ClickHouseClient;
+use SimPod\ClickHouseClient\Exception\ServerError;
 use SimPod\ClickHouseClient\Format\JsonEachRow;
 use Testo\Assert;
 use Testo\Codecov\CoversNothing;
@@ -100,6 +103,31 @@ final class ClickHouseIntegrationTest
             ],
             columns: ['id', 'status', 'name'],
         );
+    }
+
+    public function theContextBudgetStopsTheQueryOnTheServer(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+        // A fractional budget must reach the server as is: rounding it up to
+        // a whole second, or down to 0 ("unlimited"), would let this scan run.
+        [$context, $controller] = Context::background()->withTimeout(0.3);
+        $client = new ContextClickHouseClient($this->client, $context);
+        $startedNs = hrtime(as_number: true);
+
+        try {
+            $client->select('SELECT count() FROM numbers(1000000000000)', new JsonEachRow());
+        } catch (ServerError $error) {
+            Assert::string($error->getMessage())->contains('TIMEOUT_EXCEEDED');
+            Assert::true(hrtime(as_number: true) - $startedNs < 1_000_000_000);
+
+            return;
+        } finally {
+            $controller->cancel();
+        }
+
+        throw new \LogicException('the server was expected to stop the query');
     }
 
     public function batchWriterAndCount(): void

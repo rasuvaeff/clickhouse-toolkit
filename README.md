@@ -152,11 +152,16 @@ $controller->cancel();
 ```
 
 Each operation checks the context before and after the call. The remaining
-budget is passed as ClickHouse's `max_execution_time` setting (in seconds,
-rounded up, with a minimum of one second). HTTP transport timeouts remain the
-responsibility of the PSR-18 client. This is cooperative at the PHP boundary;
-use an HTTP client that closes its request when the context is cancelled if
-in-flight socket cancellation is required.
+budget is passed as ClickHouse's `max_execution_time` setting in fractional
+seconds (millisecond precision), so the server stops the query when the
+budget runs out. A stricter positive `max_execution_time` you pass is kept; a
+looser one, or `0` (unlimited), is replaced by the budget.
+
+Every operation also gets `cancel_http_readonly_queries_on_client_close=1`
+unless you set it: when the HTTP client gives up and closes the connection,
+the server stops a read-only query instead of finishing it for nobody. The
+HTTP timeout itself remains the responsibility of the PSR-18 client — without
+one, the PHP side waits for the server.
 
 ### `ClickHouseConfig` & `ClickHouseClientFactory`
 
