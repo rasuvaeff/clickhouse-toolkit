@@ -134,7 +134,9 @@ jobs:
           restore-keys: composer-${{ runner.os }}-
 
       - name: Install dependencies
-        run: composer install --no-interaction --no-progress --prefer-dist ${{ matrix.experimental && '--ignore-platform-req=php+' || '' }}
+        env:
+          PLATFORM_FLAGS: ${{ matrix.experimental && '--ignore-platform-req=php+' || '' }}
+        run: composer install --no-interaction --no-progress --prefer-dist $PLATFORM_FLAGS
 
       - name: Wait for ClickHouse
         run: |
@@ -150,7 +152,9 @@ jobs:
           exit 1
 
       - name: Build
-        run: ${{ matrix.experimental && 'composer test' || 'composer build' }}
+        env:
+          BUILD_SCRIPT: ${{ matrix.experimental && 'test' || 'build' }}
+        run: composer "$BUILD_SCRIPT"
 
   prefer-lowest:
     name: Prefer lowest
