@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.1 — 2026-10-15
+
+- Allow `rasuvaeff/context` ^0.3, so the package installs next to context 0.3. No code changes: nothing used here changed in 0.3 (all additions).
+
 ## 1.11.0 — 2026-10-15
 
 - Fixed: `ContextClickHouseClient` rounded the remaining budget up to whole
