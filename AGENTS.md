@@ -106,6 +106,17 @@ docker rm -f ch-test
   rewritten (whole token, one pass). Every fragment a frame returns must
   therefore have its params keyed exactly by the tokens in its SQL; a custom
   `ClickHouseFilterVisitor` owns that invariant for its own composites (#34).
+- `SelectQuery` (the statement builder, #45): projections are closed sets —
+  `Aggregate` and `Scalar` have **private constructors and no raw-expression
+  factory**; keep it that way, a new projection shape is a new named factory
+  with identifier validation in the constructor. A conditional aggregate's
+  condition goes through `renderFilter()` (same allow-list + params as WHERE),
+  and an empty rendered condition **throws** — never let it silently become the
+  unconditional aggregate. LIMIT/OFFSET placeholders keep deterministic names
+  (`{limit:UInt32}`) so the statement text — and the query log's
+  `normalized_query_hash` — stays constant; every fragment merge goes through
+  `PlaceholderRemap`. Do not add a JOIN/subquery shape: it cannot be made
+  injection-safe by construction, that is the documented raw-SQL escape hatch.
 - Migration runner: the bookkeeping table (`_migrations` by default, renamed
   via `$migrationsTable`) is `ReplacingMergeTree(applied_at) ORDER BY name` with
   microsecond `DateTime64(6)`; reads via `argMax` + `uniqExact` conflict

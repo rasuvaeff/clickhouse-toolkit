@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- `SelectQuery` (#45): the statement builder around the WHERE the toolkit has
+  always had. `$qb->select(table)->final()->columns()->aggregate()->groupBy()
+  ->orderBy()->limit()->build()` returns a `ParameterizedQuery {sql, params}` —
+  aggregates, GROUP BY, FINAL and a bound-parameter LIMIT/OFFSET without
+  concatenating a skeleton around `WhereClause::$sql`, which is where
+  identifier validation used to stop applying.
+  - Projections come from closed sets with private constructors:
+    `Aggregate` (`count`, `sum`, `min`, `max`, `avg`, `uniqExact`, and the
+    conditional `countIf`/`sumIf`/`uniqExactIf` over a `FilterInterface`) and
+    `Scalar` (`toString`). There is no raw-expression factory, so a projection
+    cannot become an injection point; columns and aliases are
+    identifier-validated at construction.
+  - A conditional aggregate's condition renders through the same filter visitor
+    as WHERE (allow-list, type map, bound parameters); a fully dropped
+    condition throws instead of silently becoming the unconditional aggregate.
+  - Mandatory filters apply exactly as in `buildWhere()`.
+  - LIMIT/OFFSET are emitted as `{limit:UInt32}`/`{offset:UInt32}` placeholders
+    — constant statement text, one `normalized_query_hash` in the query log;
+    name collisions are renamed through `PlaceholderRemap`.
+  - ORDER BY accepts the allow-list plus everything the query itself projects
+    or groups by (aggregate aliases included).
+  - `buildOrderBy()` gained an optional `array $alsoOrderable = []` parameter
+    (behaviour unchanged when omitted); `renderFilter()` is a new internal
+    helper. Existing `buildSelect()`/`buildCount()`/`buildDistinct()` are
+    untouched. JOIN/subqueries stay a documented raw-SQL escape hatch.
+
 ## 1.11.1 — 2026-10-15
 
 - Allow `rasuvaeff/context` ^0.3, so the package installs next to context 0.3. No code changes: nothing used here changed in 0.3 (all additions).

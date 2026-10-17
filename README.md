@@ -48,6 +48,7 @@ Built on top of [`simpod/clickhouse-client`](https://github.com/simPod/clickhous
 - [Components](#components)
   - [ClickHouseConfig & ClickHouseClientFactory](#clickhouseconfig--clickhouseclientfactory)
   - [ClickHouseQueryBuilder & WhereClause](#clickhousequerybuilder--whereclause)
+  - [Select builder: aggregates, `GROUP BY`, `FINAL`](#select-builder-aggregates-group-by-final)
   - [ClickHouseFilterVisitor](#clickhousefiltervisitor)
   - [ClickHouseDataReader](#clickhousedatareader)
   - [ClickHouseKeysetReader](#clickhousekeysetreader)
@@ -225,10 +226,11 @@ public function __construct(
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `buildWhere(FilterInterface $filter)` | `WhereClause` | `{sql, params}`; `sql` is empty when nothing matched. |
-| `buildOrderBy(?Sort $sort)` | `string` | ORDER BY fragment (allow-list-checked), or `defaultSort`; empty string means no `ORDER BY`. |
+| `buildOrderBy(?Sort $sort, array $alsoOrderable = [])` | `string` | ORDER BY fragment (allow-list-checked, plus the extra fields — see the select builder), or `defaultSort`; empty string means no `ORDER BY`. |
 | `buildSelect(string $table, array $columns = [], string $where = '', ?string $orderBy = null, ?int $limit = 20, int $offset = 0)` | `string` | `columns` empty → `SELECT *`; empty order → no `ORDER BY`; `limit` null → no LIMIT/OFFSET. |
 | `buildCount(string $table, string $where = '')` | `string` | `SELECT count() AS cnt FROM ...`. |
 | `buildDistinct(string $table, string $column)` | `string` | `SELECT DISTINCT col FROM ... ORDER BY col`. |
+| `select(string $table)` | `SelectQuery` | The full statement builder below — the query builder's allow-list, field types, mandatory filter and visitor all flow into it. |
 
 `WhereClause` is a small DTO: `public string $sql`, `public array $params`, and `isEmpty(): bool`.
 
@@ -299,6 +301,62 @@ $countSql  = $qb->buildCount(table: 'events', where: $where->sql);
 $rows  = $client->selectWithParams($selectSql, $where->params, new JsonEachRow())->data;
 $total = (int) ($client->selectWithParams($countSql, $where->params, new JsonEachRow())->data[0]['cnt'] ?? 0);
 ```
+
+### Select builder: aggregates, `GROUP BY`, `FINAL`
+
+`buildSelect()`/`buildCount()`/`buildDistinct()` cover three fixed statement shapes. A typical analytics read needs more, and every consumer used to concatenate the rest of the statement by hand around `WhereClause::$sql` — the exact place where identifier validation stops applying. `SelectQuery` (#45) assembles the whole statement instead:
+
+```php
+use Rasuvaeff\ClickHouseToolkit\Aggregate;
+use Rasuvaeff\ClickHouseToolkit\Scalar;
+
+$qb = (new ClickHouseQueryBuilder(
+    allowedFields: ['status'],
+    fieldTypes: ['status' => 'String'],
+))->withMandatoryFilter(new Equals('source', 'shop'));
+
+$query = $qb->select(table: 'order_results')
+    ->final()                                             // ReplacingMergeTree dedup read
+    ->columns('status')
+    ->aggregate(Aggregate::count(alias: 'orders'))
+    ->aggregate(Aggregate::sum(column: 'amount_cents', alias: 'amount_cents'))
+    ->aggregate(Aggregate::countIf(condition: new Equals('status', 'paid'), alias: 'paid_orders'))
+    ->groupBy('status')
+    ->orderBy(Sort::only(['orders'])->withOrder(['orders' => 'desc']))
+    ->limit(20)
+    ->build();
+
+// SELECT status, count() AS orders, sum(amount_cents) AS amount_cents,
+//        countIf(status = {p1:String}) AS paid_orders
+// FROM order_results FINAL WHERE (source = {p0:String}) GROUP BY status
+// ORDER BY orders DESC LIMIT {limit:UInt32}
+$rows = $client->selectWithParams($query->sql, $query->params, new JsonEachRow())->data;
+```
+
+`build()` returns a `ParameterizedQuery` — `public string $sql` plus `public array $params`, the exact arguments of `selectWithParams()`.
+
+The guarantees are the builder's, carried over:
+
+- **Every identifier is validated** — table, columns, GROUP BY fields, and the aliases of aggregates and scalars go through the same `Identifier::assert()` as `buildSelect()`.
+- **Projections come from closed sets.** `Aggregate` (`count`, `sum`, `min`, `max`, `avg`, `uniqExact`, and the conditional `countIf`/`sumIf`/`uniqExactIf`) and `Scalar` (`toString`) have private constructors and named factories only — there is no raw-expression factory, so a projection cannot become an injection point.
+- **A conditional aggregate takes its condition as a `FilterInterface`** — rendered by the same filter visitor WHERE uses, so the allow-list, the type map and parameter binding all apply. A condition the allow-list drops entirely is an `InvalidArgumentException`, not a silent `countIf()` → `count()` change of meaning.
+- **Mandatory filters apply** exactly as in `buildWhere()`: a `withMandatoryFilter()` set on the query builder is AND-combined into every statement.
+- **LIMIT/OFFSET are placeholders** (`{limit:UInt32}` / `{offset:UInt32}`, deterministic names), so the statement text stays constant and the ClickHouse query log groups repeated reads under one `normalized_query_hash`. A filter parameter that already owns the name is renamed by `PlaceholderRemap` — the only case where the text moves.
+- **ORDER BY accepts the allow-list plus everything the query itself projects or groups by** (aggregate aliases included) — `GROUP BY status ORDER BY status` must not silently lose its ordering because `status` never needed to be filterable. Criteria naming anything else are dropped, as in `buildOrderBy()`. An entirely dropped sort falls back to the builder's `defaultSort`.
+
+| Method | Description |
+|--------|-------------|
+| `final()` | Appends `FINAL` — the normal read for Replacing/CollapsingMergeTree tables. |
+| `columns(string ...$columns)` | Plain column identifiers, validated. |
+| `aggregate(Aggregate $aggregate)` | From the closed set above. |
+| `scalar(Scalar $scalar)` | `Scalar::toString(column:, alias:)` today. |
+| `where(?FilterInterface $filter)` | The user filter, allow-listed; the mandatory filter rides on top. |
+| `groupBy(string ...$columns)` | Validated identifiers. |
+| `orderBy(?Sort $sort)` | Null (default) emits no `ORDER BY` at all. |
+| `limit(?int $limit)` / `offset(int $offset)` | Bound placeholders; offset requires a limit. |
+| `build()` | `ParameterizedQuery { sql, params }`. |
+
+**Not included, by design:** `JOIN` and subqueries have no shape that cannot smuggle a raw expression, so they stay in a hand-written constant skeleton with every value bound as `{name:Type}` — trusted code only. `HAVING` over aggregate results is not expressible yet; the same closed-set reasoning will apply when it is.
 
 ### `ClickHouseFilterVisitor`
 

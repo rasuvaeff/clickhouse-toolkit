@@ -47,6 +47,7 @@ $sql = $qb->buildSelect(table: 'events', where: $where->sql, limit: 20);
 - [Компоненты](#компоненты)
   - [ClickHouseConfig & ClickHouseClientFactory](#clickhouseconfig--clickhouseclientfactory)
   - [ClickHouseQueryBuilder & WhereClause](#clickhousequerybuilder--whereclause)
+  - [Select-билдер: агрегаты, `GROUP BY`, `FINAL`](#select-билдер-агрегаты-group-by-final)
   - [ClickHouseFilterVisitor](#clickhousefiltervisitor)
   - [ClickHouseDataReader](#clickhousedatareader)
   - [ClickHouseKeysetReader](#clickhousekeysetreader)
@@ -224,10 +225,11 @@ public function __construct(
 | Метод | Возвращает | Описание |
 |--------|---------|-------------|
 | `buildWhere(FilterInterface $filter)` | `WhereClause` | `{sql, params}`; `sql` пуст, если ничего не совпало. |
-| `buildOrderBy(?Sort $sort)` | `string` | Фрагмент ORDER BY (проверяется по allow-list) или `defaultSort`; пустая строка означает отсутствие `ORDER BY`. |
+| `buildOrderBy(?Sort $sort, array $alsoOrderable = [])` | `string` | Фрагмент ORDER BY (проверяется по allow-list плюс дополнительные поля — см. select-билдер) или `defaultSort`; пустая строка означает отсутствие `ORDER BY`. |
 | `buildSelect(string $table, array $columns = [], string $where = '', ?string $orderBy = null, ?int $limit = 20, int $offset = 0)` | `string` | `columns` пуст → `SELECT *`; пустой порядок → без `ORDER BY`; `limit` null → без LIMIT/OFFSET. |
 | `buildCount(string $table, string $where = '')` | `string` | `SELECT count() AS cnt FROM ...`. |
 | `buildDistinct(string $table, string $column)` | `string` | `SELECT DISTINCT col FROM ... ORDER BY col`. |
+| `select(string $table)` | `SelectQuery` | Билдер полного стейтмента ниже — allow-list, типы полей, обязательный фильтр и визитор запроса перетекают в него автоматически. |
 
 `WhereClause` — небольшой DTO: `public string $sql`, `public array $params` и `isEmpty(): bool`.
 
@@ -288,6 +290,62 @@ $countSql  = $qb->buildCount(table: 'events', where: $where->sql);
 $rows  = $client->selectWithParams($selectSql, $where->params, new JsonEachRow())->data;
 $total = (int) ($client->selectWithParams($countSql, $where->params, new JsonEachRow())->data[0]['cnt'] ?? 0);
 ```
+
+### Select-билдер: агрегаты, `GROUP BY`, `FINAL`
+
+`buildSelect()`/`buildCount()`/`buildDistinct()` покрывают три фиксированные формы стейтмента. Реальному аналитическому чтению нужно больше, и каждый потребитель склеивал остальное руками вокруг `WhereClause::$sql` — ровно там, где заканчивается валидация идентификаторов. `SelectQuery` (#45) собирает стейтмент целиком:
+
+```php
+use Rasuvaeff\ClickHouseToolkit\Aggregate;
+use Rasuvaeff\ClickHouseToolkit\Scalar;
+
+$qb = (new ClickHouseQueryBuilder(
+    allowedFields: ['status'],
+    fieldTypes: ['status' => 'String'],
+))->withMandatoryFilter(new Equals('source', 'shop'));
+
+$query = $qb->select(table: 'order_results')
+    ->final()                                             // дедуп-чтение ReplacingMergeTree
+    ->columns('status')
+    ->aggregate(Aggregate::count(alias: 'orders'))
+    ->aggregate(Aggregate::sum(column: 'amount_cents', alias: 'amount_cents'))
+    ->aggregate(Aggregate::countIf(condition: new Equals('status', 'paid'), alias: 'paid_orders'))
+    ->groupBy('status')
+    ->orderBy(Sort::only(['orders'])->withOrder(['orders' => 'desc']))
+    ->limit(20)
+    ->build();
+
+// SELECT status, count() AS orders, sum(amount_cents) AS amount_cents,
+//        countIf(status = {p1:String}) AS paid_orders
+// FROM order_results FINAL WHERE (source = {p0:String}) GROUP BY status
+// ORDER BY orders DESC LIMIT {limit:UInt32}
+$rows = $client->selectWithParams($query->sql, $query->params, new JsonEachRow())->data;
+```
+
+`build()` возвращает `ParameterizedQuery` — `public string $sql` и `public array $params`, ровно аргументы `selectWithParams()`.
+
+Гарантии билдера переносятся целиком:
+
+- **Каждый идентификатор валидируется** — таблица, колонки, поля GROUP BY и алиасы агрегатов/скаляров проходят тот же `Identifier::assert()`, что и в `buildSelect()`.
+- **Проекции — из закрытых множеств.** У `Aggregate` (`count`, `sum`, `min`, `max`, `avg`, `uniqExact` и условные `countIf`/`sumIf`/`uniqExactIf`) и `Scalar` (`toString`) приватные конструкторы и только именованные фабрики — фабрики сырых выражений нет, проекция не может стать точкой инъекции.
+- **Условный агрегат принимает условие как `FilterInterface`** — его рендерит тот же визитор, что и WHERE: allow-list, карта типов и параметр-биндинг применяются полностью. Условие, которое allow-list срезал целиком, — это `InvalidArgumentException`, а не молчаливое превращение `countIf()` в `count()`.
+- **Обязательные фильтры применяются** ровно как в `buildWhere()`: `withMandatoryFilter()` на билдере AND-комбинируется в каждый стейтмент.
+- **LIMIT/OFFSET — плейсхолдеры** (`{limit:UInt32}` / `{offset:UInt32}`, детерминированные имена), текст стейтмента постоянен, и query log ClickHouse группирует повторные чтения под одним `normalized_query_hash`. Параметр фильтра, уже занявший имя, переименовывается `PlaceholderRemap`-ом — единственный случай, когда текст меняется.
+- **ORDER BY принимает allow-list плюс всё, что сам запрос проецирует или группирует** (алиасы агрегатов включительно) — `GROUP BY status ORDER BY status` не должен молча терять сортировку лишь потому, что `status` не обязан быть фильтруемым полем. Критерии с чем-то другим срезаются, как в `buildOrderBy()`. Полностью срезанная сортировка падает обратно на `defaultSort` билдера.
+
+| Метод | Описание |
+|--------|----------|
+| `final()` | Добавляет `FINAL` — обычное чтение для Replacing/CollapsingMergeTree. |
+| `columns(string ...$columns)` | Простые идентификаторы колонок, валидируются. |
+| `aggregate(Aggregate $aggregate)` | Из закрытого множества выше. |
+| `scalar(Scalar $scalar)` | Сегодня — `Scalar::toString(column:, alias:)`. |
+| `where(?FilterInterface $filter)` | Пользовательский фильтр, allow-list; обязательный фильтр — сверху. |
+| `groupBy(string ...$columns)` | Валидированные идентификаторы. |
+| `orderBy(?Sort $sort)` | Null (по умолчанию) — вообще без `ORDER BY`. |
+| `limit(?int $limit)` / `offset(int $offset)` | Связанные плейсхолдеры; offset требует limit. |
+| `build()` | `ParameterizedQuery { sql, params }`. |
+
+**Не включено намеренно:** у `JOIN` и подзапросов нет формы, которая не протаскивает сырой expression, — они остаются в рукописном константном скелете со всеми значениями в `{name:Type}` — только доверенный код. `HAVING` по агрегатам пока невыразим; когда появится, к нему применимо то же рассуждение о закрытых множествах.
 
 ### `ClickHouseFilterVisitor`
 

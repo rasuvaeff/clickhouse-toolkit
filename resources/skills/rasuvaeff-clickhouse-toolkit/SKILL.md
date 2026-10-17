@@ -2,7 +2,8 @@
 name: rasuvaeff-clickhouse-toolkit
 description: >-
   Query, read, write and migrate ClickHouse with rasuvaeff/clickhouse-toolkit —
-  ClickHouseQueryBuilder (yiisoft/data filters → parameterized SQL),
+  ClickHouseQueryBuilder (yiisoft/data filters → parameterized SQL) and its
+  SelectQuery statement builder (aggregates, GROUP BY, FINAL, bound LIMIT),
   ClickHouseDataReader, ClickHouseKeysetReader, ClickHouseBatchWriter,
   ClickHouseTableBuilder, ClickHousePartitionManager, ClickHouseMutationBuilder,
   ClickHouseMigrationRunner. Use when writing, reviewing or debugging ClickHouse
@@ -52,6 +53,20 @@ partitions, mutations and file migrations. Namespace `Rasuvaeff\ClickHouseToolki
    `max_execution_time` without expanding a stricter caller setting. It does
    not claim to close an arbitrary in-flight synchronous HTTP socket.
 
+7. **Aggregates, GROUP BY and FINAL go through `SelectQuery`, never through
+   string concatenation.** `$qb->select(table: ...)->final()->columns()
+   ->aggregate(...)->groupBy(...)->orderBy(...)->limit(n)->build()` returns a
+   `ParameterizedQuery {sql, params}` — the exact `selectWithParams()` args.
+   Projections come from closed sets (`Aggregate`: count/sum/min/max/avg/
+   uniqExact + conditional countIf/sumIf/uniqExactIf over a `FilterInterface`;
+   `Scalar::toString`) — there is no raw-expression factory, and a conditional
+   aggregate's condition runs the same allow-list + bound-parameter machinery
+   as WHERE (a fully dropped condition throws, it never silently becomes the
+   unconditional aggregate). LIMIT/OFFSET are `{limit:UInt32}`/`{offset:UInt32}`
+   placeholders, so the statement text stays constant for query-log grouping.
+   JOIN/subqueries have no safe shape: hand-written constant skeleton, trusted
+   code only.
+
 ## Canonical usage
 
 ```php
@@ -74,6 +89,25 @@ $sql = $qb->buildSelect(
     limit: 50,
 );
 $rows = $client->selectWithParams($sql, $where->params, new JsonEachRow())->data;
+```
+
+An analytics read (aggregates, FINAL, GROUP BY, bound LIMIT) — no hand-written
+skeleton around `$where->sql`:
+
+```php
+use Rasuvaeff\ClickHouseToolkit\{Aggregate, ClickHouseQueryBuilder, Scalar};
+
+$query = $qb->select(table: 'order_results')
+    ->final()
+    ->columns('status')
+    ->aggregate(Aggregate::count(alias: 'orders'))
+    ->aggregate(Aggregate::sum(column: 'amount_cents', alias: 'amount_cents'))
+    ->groupBy('status')
+    ->orderBy(Sort::only(['orders'])->withOrder(['orders' => 'desc']))
+    ->limit(20)
+    ->build();
+
+$rows = $client->selectWithParams($query->sql, $query->params, new JsonEachRow())->data;
 ```
 
 ## Full API

@@ -114,8 +114,9 @@ Param keys are unique per occurrence (`p0,p1,…`) — repeated fields never col
 `DateTimeInterface` → `Y-m-d H:i:s`; `bool` → `0/1`.
 
 Builder methods: `buildWhere(?FilterInterface=null): WhereClause`,
-`buildOrderBy(?Sort): string`, `buildSelect(table, columns=[], where='', orderBy=null, ?limit=20, offset=0): string`,
-`buildCount(table, where=''): string`, `buildDistinct(table, column): string`.
+`buildOrderBy(?Sort, alsoOrderable=[]): string`, `buildSelect(table, columns=[], where='', orderBy=null, ?limit=20, offset=0): string`,
+`buildCount(table, where=''): string`, `buildDistinct(table, column): string`,
+`select(table): SelectQuery` — the full statement builder below.
 
 Fluent + immutable: `ClickHouseQueryBuilder::create(allowedFields, fieldTypes=[], defaultSort='')`,
 `->withDefaultSort(string)`, `->withMandatoryFilter(FilterInterface)`, `->withServerTimezone(?string)`,
@@ -139,6 +140,45 @@ $sql verbatim (e.g. `'toDate(created_at) = {d:Date}'`). $sql is trusted/never fr
 input; values go in $params using `{name:Type}` placeholders. Names are isolated per
 filter: a name already taken (sibling raw filter, builder `p0,p1,…`, mandatory filter)
 is renamed `name_0`, `name_1`, … together with its `{name:` token — both values stay bound.
+
+## Select builder (aggregates, GROUP BY, FINAL)
+
+`$qb->select(table)` → a fluent `SelectQuery`; `build(): ParameterizedQuery` returns
+`{sql, params}` — the exact `selectWithParams()` arguments. The builder's allow-list,
+fieldTypes, mandatory filter and visitor all flow in: `withMandatoryFilter()` applies
+to every statement.
+
+```php
+$query = $qb->select(table: 'order_results')
+    ->final()                        // Replacing/CollapsingMergeTree dedup read
+    ->columns('status')              // validated identifiers
+    ->aggregate(Aggregate::count(alias: 'orders'))
+    ->aggregate(Aggregate::sum(column: 'amount_cents', alias: 'amount_cents'))
+    ->aggregate(Aggregate::countIf(condition: new Equals('status', 'paid'), alias: 'paid_orders'))
+    ->scalar(Scalar::toString(column: 'occurred_at', alias: 'occurred_at'))
+    ->where($userFilter)             // allow-listed; mandatory filter on top
+    ->groupBy('status')              // validated identifiers
+    ->orderBy($sort)                 // null = no ORDER BY at all
+    ->limit(20)                      // → LIMIT {limit:UInt32}; offset(n) → OFFSET {offset:UInt32}
+    ->build();
+```
+
+Rules:
+- Closed projection sets only: `Aggregate::count(?alias)`, `sum/min/max/avg/uniqExact(column, ?alias)`,
+  `countIf(condition, ?alias)`, `sumIf(column, condition, ?alias)`, `uniqExactIf(column, condition, ?alias)`;
+  `Scalar::toString(column, ?alias)`. No raw-expression factory exists — a projection cannot
+  carry injected SQL. Column and alias are `Identifier::assert()`-validated at construction.
+- A conditional aggregate's condition is a `FilterInterface` rendered by the same visitor
+  as WHERE (allow-list + types + bound params). A condition the allow-list drops entirely
+  throws `InvalidArgumentException` — it never silently becomes the unconditional aggregate.
+- ORDER BY accepts the allow-list plus everything the query projects or groups by
+  (aggregate aliases included); other criteria are dropped like in `buildOrderBy()`.
+  A fully dropped sort falls back to the builder's `defaultSort`.
+- LIMIT/OFFSET are deterministic `{limit:UInt32}`/`{offset:UInt32}` placeholders (constant
+  statement text, one `normalized_query_hash`); collisions with filter params are renamed
+  by PlaceholderRemap. Offset requires a limit. No projections → `SELECT *`.
+- JOIN/subqueries: out of scope — hand-written constant skeleton, trusted code only.
+  HAVING: not expressible yet.
 
 ## DataReader (pagination-ready, yiisoft/data)
 
