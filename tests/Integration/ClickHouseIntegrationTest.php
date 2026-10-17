@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Rasuvaeff\ClickHouseToolkit\Tests\Integration;
 
+use Rasuvaeff\ClickHouseToolkit\Aggregate;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseBatchWriter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseClientFactory;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseConfig;
@@ -18,6 +19,7 @@ use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseTableBuilder;
 use Rasuvaeff\ClickHouseToolkit\ContextClickHouseClient;
+use Rasuvaeff\ClickHouseToolkit\Scalar;
 use Rasuvaeff\Context\Context;
 use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Exception\ServerError;
@@ -33,6 +35,7 @@ use Yiisoft\Data\Reader\Filter\GreaterThan;
 use Yiisoft\Data\Reader\Filter\In;
 use Yiisoft\Data\Reader\Filter\Like;
 use Yiisoft\Data\Reader\Filter\OrX;
+use Yiisoft\Data\Reader\Sort;
 
 #[Test]
 #[CoversNothing]
@@ -524,5 +527,131 @@ final class ClickHouseIntegrationTest
 
         unlink($dir . '/001_create_it_custom.sql');
         rmdir($dir);
+    }
+
+    private const string RESULTS_TABLE = 'it_order_results';
+
+    /**
+     * A ReplacingMergeTree with a superseded row: order 1 was refunded after
+     * being paid, and only `updated_at` — the version column — separates the
+     * two. Without FINAL a totals read counts both.
+     */
+    private function orderResults(): void
+    {
+        $this->client->executeQuery('DROP TABLE IF EXISTS ' . self::RESULTS_TABLE);
+        $this->client->executeQuery(sprintf(
+            'CREATE TABLE %s (order_id UInt64, status String, amount_cents UInt64, occurred_at DateTime, updated_at DateTime) '
+            . 'ENGINE = ReplacingMergeTree(updated_at) ORDER BY order_id',
+            self::RESULTS_TABLE,
+        ));
+
+        (new ClickHouseBatchWriter($this->client, self::RESULTS_TABLE, ['order_id', 'status', 'amount_cents', 'occurred_at', 'updated_at'], batchSize: 10))
+            ->write([
+                ['order_id' => 1, 'status' => 'paid', 'amount_cents' => 1000, 'occurred_at' => '2026-01-01 10:00:00', 'updated_at' => '2026-01-01 10:00:00'],
+                ['order_id' => 2, 'status' => 'paid', 'amount_cents' => 2000, 'occurred_at' => '2026-01-02 10:00:00', 'updated_at' => '2026-01-02 10:00:00'],
+                ['order_id' => 3, 'status' => 'paid', 'amount_cents' => 500, 'occurred_at' => '2026-01-03 10:00:00', 'updated_at' => '2026-01-03 10:00:00'],
+                ['order_id' => 1, 'status' => 'refunded', 'amount_cents' => 1000, 'occurred_at' => '2026-01-01 10:00:00', 'updated_at' => '2026-01-04 10:00:00'],
+            ]);
+    }
+
+    /**
+     * The exact statement shape the sandbox hand-wrote before #45: columns,
+     * aggregates, FINAL and GROUP BY, with every value bound.
+     */
+    public function selectBuilderTotalsByStatusFinalDeduplicates(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+        $this->orderResults();
+
+        $query = (new ClickHouseQueryBuilder(allowedFields: ['status'], fieldTypes: ['status' => 'String']))
+            ->select(table: self::RESULTS_TABLE)
+            ->final()
+            ->columns('status')
+            ->aggregate(Aggregate::count(alias: 'orders'))
+            ->aggregate(Aggregate::sum(column: 'amount_cents', alias: 'amount_cents'))
+            ->groupBy('status')
+            ->orderBy(Sort::only(['status'])->withOrder(['status' => 'asc']))
+            ->build();
+
+        $rows = $this->client->selectWithParams($query->sql, $query->params, new JsonEachRow())->data;
+
+        // JsonEachRow hands UInt64 back as strings; the row shape is asserted
+        // field by field so the cast is visible where it happens.
+        Assert::same(count($rows), 2);
+        Assert::same([(string) $rows[0]['status'], (int) $rows[0]['orders'], (int) $rows[0]['amount_cents']], ['paid', 2, 2500]);
+        Assert::same([(string) $rows[1]['status'], (int) $rows[1]['orders'], (int) $rows[1]['amount_cents']], ['refunded', 1, 1000]);
+    }
+
+    public function selectBuilderConditionalAggregateBindsItsValue(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+        $this->orderResults();
+
+        $query = (new ClickHouseQueryBuilder(allowedFields: ['status'], fieldTypes: ['status' => 'String']))
+            ->select(table: self::RESULTS_TABLE)
+            ->final()
+            ->aggregate(Aggregate::countIf(condition: new Equals('status', 'paid'), alias: 'paid_orders'))
+            ->build();
+
+        $rows = $this->client->selectWithParams($query->sql, $query->params, new JsonEachRow())->data;
+
+        Assert::same((int) ($rows[0]['paid_orders'] ?? -1), 2);
+    }
+
+    public function selectBuilderLatestReadBindsTheLimit(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+        $this->orderResults();
+
+        $query = (new ClickHouseQueryBuilder(allowedFields: []))
+            ->select(table: self::RESULTS_TABLE)
+            ->final()
+            ->columns('order_id')
+            ->scalar(Scalar::toString(column: 'occurred_at', alias: 'occurred_at'))
+            ->orderBy(Sort::only(['occurred_at'])->withOrder(['occurred_at' => 'desc']))
+            ->limit(2)
+            ->build();
+
+        $rows = $this->client->selectWithParams($query->sql, $query->params, new JsonEachRow())->data;
+
+        Assert::same(count($rows), 2);
+        Assert::same((int) $rows[0]['order_id'], 3);
+        Assert::same((string) $rows[0]['occurred_at'], '2026-01-03 10:00:00');
+    }
+
+    public function selectBuilderPagesThroughPlaceholders(): void
+    {
+        if (!isset($this->client)) {
+            return;
+        }
+        $this->orderResults();
+
+        $builder = new ClickHouseQueryBuilder(allowedFields: []);
+        $first = $builder->select(table: self::RESULTS_TABLE)
+            ->final()
+            ->columns('order_id')
+            ->orderBy(Sort::only(['order_id'])->withOrder(['order_id' => 'asc']))
+            ->limit(2)
+            ->offset(0)
+            ->build();
+        $second = $builder->select(table: self::RESULTS_TABLE)
+            ->final()
+            ->columns('order_id')
+            ->orderBy(Sort::only(['order_id'])->withOrder(['order_id' => 'asc']))
+            ->limit(2)
+            ->offset(2)
+            ->build();
+
+        $page1 = $this->client->selectWithParams($first->sql, $first->params, new JsonEachRow())->data;
+        $page2 = $this->client->selectWithParams($second->sql, $second->params, new JsonEachRow())->data;
+
+        Assert::same(array_map(static fn(array $row): int => (int) $row['order_id'], $page1), [1, 2]);
+        Assert::same(array_map(static fn(array $row): int => (int) $row['order_id'], $page2), [3]);
     }
 }

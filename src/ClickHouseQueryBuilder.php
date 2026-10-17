@@ -152,7 +152,7 @@ final readonly class ClickHouseQueryBuilder
         return new WhereClause(sql: $sql, params: $params);
     }
 
-    public function buildOrderBy(?Sort $sort): string
+    public function buildOrderBy(?Sort $sort, array $alsoOrderable = []): string
     {
         if (!$sort instanceof Sort) {
             return $this->defaultSort;
@@ -160,7 +160,7 @@ final readonly class ClickHouseQueryBuilder
 
         $parts = [];
         foreach ($sort->getCriteria() as $field => $direction) {
-            if (!$this->isAllowed($field)) {
+            if (!$this->isAllowed($field) && !in_array(needle: $field, haystack: $alsoOrderable, strict: true)) {
                 continue;
             }
             $parts[] = $field . ' ' . ($direction === SORT_ASC ? 'ASC' : 'DESC');
@@ -171,6 +171,44 @@ final readonly class ClickHouseQueryBuilder
         }
 
         return implode(separator: ', ', array: $parts);
+    }
+
+    /**
+     * Starts a full statement around the WHERE this builder already produces:
+     * columns, aggregates, FINAL, GROUP BY, ORDER BY and a bound-parameter
+     * LIMIT, with no string concatenation at the call site (#45). The
+     * builder's allow-list, field types, mandatory filter and visitor flow
+     * into it — a `withMandatoryFilter()` set here applies to every statement
+     * {@see SelectQuery::build()} returns.
+     *
+     * @throws \InvalidArgumentException on a malformed table identifier.
+     */
+    public function select(string $table): SelectQuery
+    {
+        Identifier::assert($table);
+
+        return new SelectQuery($this, $table);
+    }
+
+    /**
+     * Renders a single filter through this builder's visitor — no mandatory
+     * filter, no allow-list bypass. This is the machinery a conditional
+     * aggregate ({@see Aggregate::countIf()}) uses for its condition; the
+     * by-reference index lets several conditions number their parameters
+     * `p0`, `p1`, … without collisions.
+     *
+     * @internal
+     */
+    public function renderFilter(FilterInterface $filter, int &$index): WhereClause
+    {
+        [$sql, $sub] = $this->visitor->dispatch($filter, $index, false);
+        if ($sql === '') {
+            return new WhereClause(sql: '', params: []);
+        }
+
+        [$sql, $params] = PlaceholderRemap::merge([], $sql, $sub);
+
+        return new WhereClause(sql: $sql, params: $params);
     }
 
     /**
