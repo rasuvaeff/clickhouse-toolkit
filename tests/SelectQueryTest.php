@@ -31,7 +31,7 @@ final class SelectQueryTest
 {
     public function buildsTheTotalsByStatusRead(): void
     {
-        $builder = new ClickHouseQueryBuilder(allowedFields: [])
+        $builder = (new ClickHouseQueryBuilder(allowedFields: []))
             ->withMandatoryFilter(new Equals('source', 'shop'));
 
         $query = $builder->select(table: 'order_results')
@@ -53,7 +53,7 @@ final class SelectQueryTest
 
     public function buildsTheLatestReadWithAScalarWrapAndABoundLimit(): void
     {
-        $builder = new ClickHouseQueryBuilder(allowedFields: [])
+        $builder = (new ClickHouseQueryBuilder(allowedFields: []))
             ->withMandatoryFilter(new Equals('source', 'shop'));
 
         $query = $builder->select(table: 'order_results')
@@ -74,7 +74,7 @@ final class SelectQueryTest
 
     public function buildsTheSummaryReadWithoutGroupBy(): void
     {
-        $builder = new ClickHouseQueryBuilder(allowedFields: [])
+        $builder = (new ClickHouseQueryBuilder(allowedFields: []))
             ->withMandatoryFilter(new Equals('source', 'shop'));
 
         $query = $builder->select(table: 'order_results')
@@ -99,7 +99,7 @@ final class SelectQueryTest
 
     public function userAndMandatoryFiltersAreAndComposed(): void
     {
-        $builder = new ClickHouseQueryBuilder(allowedFields: ['status'])
+        $builder = (new ClickHouseQueryBuilder(allowedFields: ['status']))
             ->withMandatoryFilter(new Equals('source', 'shop'));
 
         $query = $builder->select(table: 'order_results')
@@ -199,7 +199,7 @@ final class SelectQueryTest
 
     public function aLimitNamedParameterCollisionIsRenamed(): void
     {
-        $builder = new ClickHouseQueryBuilder(allowedFields: [])
+        $builder = (new ClickHouseQueryBuilder(allowedFields: []))
             ->withMandatoryFilter(new ClickHouseRawFilter(sql: 'n = {limit:UInt64}', params: ['limit' => 7]));
 
         $query = $builder->select(table: 'events')->limit(3)->build();
