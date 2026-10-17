@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.12.0 — 2026-10-17
 
 - `SelectQuery` (#45): the statement builder around the WHERE the toolkit has
   always had. `$qb->select(table)->final()->columns()->aggregate()->groupBy()
