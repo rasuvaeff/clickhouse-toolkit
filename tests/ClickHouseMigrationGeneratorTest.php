@@ -71,6 +71,44 @@ final class ClickHouseMigrationGeneratorTest
         Assert::same(basename($path), '001_first.sql');
     }
 
+    public function ignoresDigitsThatAreNotAtTheStartOfTheName(): void
+    {
+        $dir = $this->makeTempDir();
+        file_put_contents($dir . '/001_a.sql', 'SELECT 1');
+        file_put_contents($dir . '/backup_500_b.sql', 'SELECT 2');
+
+        $path = (new ClickHouseMigrationGenerator($dir))->generate('next');
+
+        Assert::same(basename($path), '002_next.sql');
+    }
+
+    public function createsTheMigrationsDirectoryWorldAccessibleBeforeTheUmask(): void
+    {
+        $dir = sys_get_temp_dir() . '/chmig_' . uniqid('', more_entropy: true) . '/nested';
+        $this->tempDirs[] = dirname($dir);
+
+        $previous = umask(0);
+
+        try {
+            (new ClickHouseMigrationGenerator($dir))->generate('first');
+        } finally {
+            umask($previous);
+        }
+
+        Assert::same(fileperms($dir) & 0o777, 0o777);
+    }
+
+    public function reportsAMigrationsDirectoryThatCannotBeCreated(): void
+    {
+        $blocker = $this->makeTempDir() . '/not-a-directory';
+        file_put_contents($blocker, 'x');
+
+        Expect::exception(\RuntimeException::class)
+            ->withMessageContaining('Cannot create migrations directory');
+
+        (new ClickHouseMigrationGenerator($blocker . '/migrations'))->generate('first');
+    }
+
     public function sanitizesDescription(): void
     {
         $dir = $this->makeTempDir();

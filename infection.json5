@@ -7,18 +7,48 @@
         "text": "php://stderr",
         "summary": "build/infection-summary.log"
     },
-    // 95 is the honest floor. The remaining survivors are equivalent mutants:
-    //  - `mkdir` / `file_put_contents` / `file_get_contents` failure branches need
-    //    a read-only filesystem to exercise and are equivalent in practice;
-    //  - `(int)` / `(string)` casts on JSON values and Symfony `getArgument()`
-    //    are redundant (PHP auto-coerces);
-    //  - `glob() === false` checks are unreachable (glob returns `[]`);
+    // 95 is the honest floor; overall MSI with --with-uncovered is about 97.6%
+    // (Escaped 18, Not Covered 4, 9 Timed Out counted as killed). The remaining
+    // survivors are equivalent or untestable:
+    //  - `mkdir` / `file_put_contents` / `glob() === false` failure branches and the
+    //    "file already exists" guard of the migration generator need a read-only
+    //    filesystem or a race to exercise (Not Covered), and the `&&` in the
+    //    mkdir condition has an equivalent `||` variant;
+    //  - `(int)` / `(bool)` / `(float)` / `(string)` casts on JSON values, numeric
+    //    settings and Symfony `getArgument()` are redundant (PHP auto-coerces);
     //  - `sort()` after `glob()` is redundant (glob already sorts);
-    //  - `match (true)` subject and wall-clock polling (`microtime`/`usleep`)
-    //    are untestable by design (PCOV quirk / timing flakiness).
+    //  - the `All` arm of `ClickHouseSqlFilterVisitor::dispatch()` equals the
+    //    `default` arm, `array_values(array_unique())` only normalises a list the
+    //    only consumer re-checks with `in_array`, `Identifier::assert()` in
+    //    `ClickHouseQueryBuilder::select()` is repeated by the `SelectQuery`
+    //    constructor, and `?? 0` -> `?? -1` in the data reader is clamped by `max(0, …)`;
+    //  - wall-clock polling (`microtime` comparison, `usleep`) in
+    //    `waitForMutations()` is untestable by design (timing flakiness).
     "minMsi": 95,
     "testFramework": "testo",
     "mutators": {
-        "@default": true
+        "@default": true,
+        // Constructor/method parameter declarations with a default value
+        // (`private int $x = 100,`, `bool $strict = false,`): the mutant sits on a
+        // signature line with no executable opcode under pcov, so it is reported Not
+        // Covered whatever the tests do. Only a type-prefixed `$name = default,` line
+        // matches; a body line cannot (no type before the variable). Do NOT add ^ or $:
+        // Infection wraps the pattern as ^-\s*REGEX$ over the removed diff line.
+        // Verified 2026-11-01 by diffing the survivor lists with and without it:
+        // bulkhead 6, circuit-breaker 13, json-ld 19 mutants removed, all of them
+        // such signature lines; Escaped and Timed Out unchanged.
+        "global-ignoreSourceCodeByRegex": [
+            "(?:(?:private|protected|public|readonly)\\s+)*\\??[A-Za-z_\\\\][\\w\\\\|]*\\s+\\$\\w+\\s*=\\s*[^,;]+,"
+        ],
+        // Off: with --with-uncovered a PublicVisibility mutant sits on a parameterless
+        // method's signature line, which has no executable opcode under pcov/xdebug,
+        // so it is reported Not Covered and can never be killed, whatever #[Covers]
+        // says. Measured on pinned-http-client 2026-11-01: 4 of 4 such mutants were
+        // Not Covered, none killed.
+        "PublicVisibility": false,
+        // Off for the same reason: a ProtectedVisibility mutant on a protected method's
+        // signature line is Not Covered and cannot be killed. Measured on
+        // understudy-phpunit 2026-11-01: 4 of 4 such mutants were Not Covered.
+        "ProtectedVisibility": false
     }
 }

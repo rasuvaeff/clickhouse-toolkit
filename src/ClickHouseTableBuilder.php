@@ -46,8 +46,9 @@ final class ClickHouseTableBuilder
         return new self($client, $table);
     }
 
-    public function ifNotExists(bool $ifNotExists = true): self
-    {
+    public function ifNotExists(
+        bool $ifNotExists = true,
+    ): self {
         $this->ifNotExists = $ifNotExists;
 
         return $this;

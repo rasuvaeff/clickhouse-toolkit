@@ -16,6 +16,7 @@ use Testo\Test;
 
 #[Test]
 #[Covers(ClickHouseMigrationsRunCommand::class)]
+#[Covers(ClickHouseMigrationRunner::class)]
 final class ClickHouseMigrationsRunCommandTest
 {
     /** @var list<string> */

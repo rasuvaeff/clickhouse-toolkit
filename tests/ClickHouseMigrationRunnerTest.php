@@ -88,12 +88,14 @@ final class ClickHouseMigrationRunnerTest
 
     public function throwsWhenMigrationHasConflictingChecksums(): void
     {
-        $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":2}', sha1('x'));
+        $checksum = sha1((string) file_get_contents(self::MIGRATIONS_DIR . '/001_create_demo.sql'));
+        $row = sprintf('{"name":"001_create_demo.sql","current_checksum":"%s","variants":2}', $checksum);
         $client = $this->clientReturning($row);
 
         $runner = new ClickHouseMigrationRunner($client, self::MIGRATIONS_DIR);
 
-        Expect::exception(ClickHouseMigrationException::class);
+        Expect::exception(ClickHouseMigrationException::class)
+            ->withMessageContaining('"001_create_demo.sql" has 2 conflicting checksums recorded');
 
         $runner->run();
     }
@@ -172,7 +174,7 @@ final class ClickHouseMigrationRunnerTest
 
         Assert::notNull($caught);
         Assert::string($caught->getMessage())->contains('001_create.sql');
-        Assert::string($caught->getMessage())->contains('{{events_table}}');
+        Assert::string($caught->getMessage())->contains('unresolved placeholder "{{events_table}}"');
 
         // The bookkeeping CREATE runs before any file is read; the unresolved
         // placeholder must stop everything after it — no migration SQL executed.
@@ -234,10 +236,13 @@ final class ClickHouseMigrationRunnerTest
         file_put_contents($dir . '/002_real.sql', 'CREATE TABLE x (a UInt8) ENGINE = Memory');
 
         $logger = Understudy::for(LoggerInterface::class);
+        $warningContext = Arg::captor();
+        when(fn() => $logger->warning(Arg::any(), $warningContext->capture()));
         $client = $this->clientReturning('');
 
         $applied = (new ClickHouseMigrationRunner($client, $dir, $logger))->run();
 
+        Assert::same($warningContext->last(), ['name' => '001_blank.sql']);
         Assert::same($applied, ['002_real.sql']);
         verify(fn() => $client->insert(Arg::any(), Arg::any()), times: 1);
         verify(fn() => $logger->warning(Arg::any(), Arg::any()), times: 1);
