@@ -7,11 +7,16 @@ namespace Rasuvaeff\ClickHouseToolkit\Tests;
 use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMutationBuilder;
 use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
+use Rasuvaeff\Understudy\Arg;
+use Rasuvaeff\Understudy\Understudy;
+use SimPod\ClickHouseClient\Client\ClickHouseClient;
 use SimPod\ClickHouseClient\Output\JsonEachRow as JsonEachRowOutput;
 use Testo\Assert;
 use Testo\Codecov\Covers;
 use Testo\Expect;
 use Testo\Test;
+
+use function Rasuvaeff\Understudy\when;
 
 #[Test]
 #[Covers(ClickHouseMutationBuilder::class)]
@@ -66,6 +71,20 @@ final class ClickHouseMutationBuilderTest
         ));
 
         Assert::true((new ClickHouseMutationBuilder($client))->waitForMutations('events', 5.0));
+    }
+
+    public function waitForMutationsPollsAgainWhileTheDeadlineIsAhead(): void
+    {
+        $pending = new JsonEachRowOutput(
+            '{"mutation_id":"m1","command":"c","is_done":"0","parts_to_do":"3","latest_fail_reason":""}',
+        );
+        $done = new JsonEachRowOutput(
+            '{"mutation_id":"m1","command":"c","is_done":"1","parts_to_do":"0","latest_fail_reason":""}',
+        );
+        $client = Understudy::for(ClickHouseClient::class);
+        when(fn() => $client->selectWithParams(Arg::any(), Arg::any(), Arg::any()))->returns($pending, $done);
+
+        Assert::true((new ClickHouseMutationBuilder($client))->waitForMutations('events', 30.0));
     }
 
     public function waitForMutationsTimesOutWhilePending(): void

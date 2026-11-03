@@ -8,6 +8,7 @@ use InvalidArgumentException;
 use Rasuvaeff\ClickHouseToolkit\Aggregate;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseQueryBuilder;
 use Rasuvaeff\ClickHouseToolkit\ClickHouseRawFilter;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseSqlFilterVisitor;
 use Rasuvaeff\ClickHouseToolkit\ParameterizedQuery;
 use Rasuvaeff\ClickHouseToolkit\Scalar;
 use Rasuvaeff\ClickHouseToolkit\SelectQuery;
@@ -26,6 +27,8 @@ use Yiisoft\Data\Reader\Sort;
  */
 #[Test]
 #[Covers(SelectQuery::class)]
+#[Covers(ClickHouseQueryBuilder::class)]
+#[Covers(ClickHouseSqlFilterVisitor::class)]
 #[Covers(ParameterizedQuery::class)]
 final class SelectQueryTest
 {
@@ -190,11 +193,27 @@ final class SelectQueryTest
     {
         // 'secret' is not allow-listed: the condition would render empty and
         // countIf() silently degenerate into count() — a different query.
-        Expect::exception(InvalidArgumentException::class);
+        Expect::exception(InvalidArgumentException::class)
+            ->withMessageContaining('The condition of the "countIf" aggregate produced no SQL: every filter in it was dropped by the allow-list. Add the field to allowedFields or use a mandatory filter.');
 
         $this->builder()->select(table: 'events')
             ->aggregate(Aggregate::countIf(condition: new Equals('secret', 'x')))
             ->build();
+    }
+
+    public function theConstructorRefusesAMalformedTableItself(): void
+    {
+        Expect::exception(InvalidArgumentException::class);
+
+        new SelectQuery(new ClickHouseQueryBuilder(allowedFields: []), 'events; DROP');
+    }
+
+    public function aZeroLimitIsAccepted(): void
+    {
+        $query = $this->builder()->select(table: 'events')->limit(0)->build();
+
+        Assert::same($query->sql, 'SELECT * FROM events LIMIT {limit:UInt32}');
+        Assert::same($query->params, ['limit' => 0]);
     }
 
     public function aLimitNamedParameterCollisionIsRenamed(): void

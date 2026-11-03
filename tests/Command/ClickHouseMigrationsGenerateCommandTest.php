@@ -14,6 +14,7 @@ use Testo\Test;
 
 #[Test]
 #[Covers(ClickHouseMigrationsGenerateCommand::class)]
+#[Covers(ClickHouseMigrationGenerator::class)]
 final class ClickHouseMigrationsGenerateCommandTest
 {
     /** @var list<string> */

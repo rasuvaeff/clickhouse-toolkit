@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Rasuvaeff\ClickHouseToolkit\Tests\Command;
 
 use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationRunner;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationState;
+use Rasuvaeff\ClickHouseToolkit\ClickHouseMigrationStatus;
 use Rasuvaeff\ClickHouseToolkit\Command\ClickHouseMigrationsStatusCommand;
 use Rasuvaeff\ClickHouseToolkit\Tests\Support\Clients;
 use Rasuvaeff\Understudy\Arg;
@@ -21,6 +23,9 @@ use function Rasuvaeff\Understudy\when;
 
 #[Test]
 #[Covers(ClickHouseMigrationsStatusCommand::class)]
+#[Covers(ClickHouseMigrationRunner::class)]
+#[Covers(ClickHouseMigrationStatus::class)]
+#[Covers(ClickHouseMigrationState::class)]
 final class ClickHouseMigrationsStatusCommandTest
 {
     /** @var list<string> */
@@ -134,10 +139,20 @@ final class ClickHouseMigrationsStatusCommandTest
         $dir = $this->makeTempDirWithTwoMigrations();
         $tester = $this->tester($dir, '');
 
-        $exitCode = $tester->execute([]);
+        // an unset counter would only raise a warning and print 0, so turn
+        // warnings into failures to see that every state has its own counter
+        set_error_handler(static function (int $severity, string $message): never {
+            throw new \ErrorException($message, 0, $severity);
+        });
+
+        try {
+            $exitCode = $tester->execute([]);
+        } finally {
+            restore_error_handler();
+        }
 
         Assert::same($exitCode, 0);
-        Assert::string($tester->getDisplay())->contains('2 pending');
+        Assert::string($tester->getDisplay())->contains('0 applied, 2 pending, 0 missing, 0 diverged');
     }
 
     private function tester(string $dir, string $chRows): CommandTester

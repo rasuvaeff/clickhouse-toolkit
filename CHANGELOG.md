@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Mutation testing now counts code that tests execute but do not name in `#[Covers]` (`infection --with-uncovered`); overall MSI 93% to about 97.6% against minMsi 95. `SelectQueryTest` and the migration command tests now name the classes they exercise. Added tests: every `ContextClickHouseClient` operation reaches the wrapped client and re-checks the context afterwards, migration generator prefix matching, directory mode and unwritable directory, runner conflicting-checksum and placeholder messages, empty-migration warning context, mutation polling that deadline-checks correctly, zero limit, `SelectQuery` constructor validation, full aggregate error message, and per-state counters of the status command. `ClickHouseTableBuilder::ifNotExists()` now lists its parameter on its own line (no behaviour change).
+
 ## 1.12.0 — 2026-10-17
 
 - `SelectQuery` (#45): the statement builder around the WHERE the toolkit has
