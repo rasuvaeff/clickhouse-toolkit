@@ -55,7 +55,7 @@
         "testo/bench": "^0.1.5",
         "testo/bridge-infection": "^0.1.6",
         "testo/testo": "^0.10.25",
-        "vimeo/psalm": "^6.16"
+        "vimeo/psalm": "^7.0"
     },
     "suggest": {
         "guzzlehttp/guzzle": "A PSR-18 client + PSR-17 factories (alternatively symfony/http-client + nyholm/psr7)"
