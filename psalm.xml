@@ -12,4 +12,16 @@
             <directory name="vendor"/>
         </ignoreFiles>
     </projectFiles>
+    <issueHandlers>
+        <!-- yiisoft/data declares `@return static New instance` and at the same time
+             `@psalm-return $this` on withSort/withLimit/withOffset, while its own
+             IterableDataReader returns a clone. Psalm 7 honors the `$this` contract,
+             so every immutable implementation of these interfaces is flagged. Scoped
+             to the reader until the upstream docblock is fixed. -->
+        <InvalidReturnStatement>
+            <errorLevel type="info">
+                <file name="src/ClickHouseDataReader.php"/>
+            </errorLevel>
+        </InvalidReturnStatement>
+    </issueHandlers>
 </psalm>
