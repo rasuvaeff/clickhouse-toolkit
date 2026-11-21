@@ -23,5 +23,14 @@
                 <file name="src/ClickHouseDataReader.php"/>
             </errorLevel>
         </InvalidReturnStatement>
+        <!-- The migration checksum is a change detector, not a security boundary,
+             and the sha1 values are already stored in every applied-migrations
+             table; switching the algorithm would flag each applied migration as
+             modified. -->
+        <WeakHash>
+            <errorLevel type="info">
+                <file name="src/ClickHouseMigrationRunner.php"/>
+            </errorLevel>
+        </WeakHash>
     </issueHandlers>
 </psalm>
