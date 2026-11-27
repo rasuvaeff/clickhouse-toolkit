@@ -58,7 +58,8 @@ final class ClickHouseMigrationsGenerateCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
-        $description = (string) $input->getArgument('description');
+        $argument = $input->getArguments()['description'] ?? null;
+        $description = is_scalar($argument) ? (string) $argument : '';
 
         try {
             $path = $this->generator->generate($description);

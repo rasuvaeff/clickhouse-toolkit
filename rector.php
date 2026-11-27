@@ -3,7 +3,8 @@
 declare(strict_types=1);
 
 use Rasuvaeff\RectorNamedLiterals\AddNameToLiteralArgumentRector;
-use Rector\CodeQuality\Rector\Identical\FlipTypeControlToUseExclusiveTypeRector;
+use Rector\CodeQuality\Rector\If_\ExplicitNullableObjectInstanceRector;
+use Rector\CodeQuality\Rector\Property\FixClassCaseSensitivityVarDocblockRector;
 use Rector\Config\RectorConfig;
 
 return RectorConfig::configure()
@@ -13,11 +14,12 @@ return RectorConfig::configure()
     ])
     ->withPhpSets(php83: true)
     ->withPreparedSets(deadCode: true, codeQuality: true)
-    ->withRules([AddNameToLiteralArgumentRector::class])
     ->withSkip([
-        // Rewrites `$x !== null` into `$x instanceof Some\Long\ClassName` on a
-        // property whose declared type already says which class it is: a
-        // fully qualified name inline, stating nothing the type declaration
-        // did not, and reading worse at every place it appears.
-        FlipTypeControlToUseExclusiveTypeRector::class,
-    ]);
+        // Takes the psalm type in `@var scalar` for the `Scalar` class of this
+        // package and capitalizes it, which changes the type.
+        FixClassCaseSensitivityVarDocblockRector::class,
+        // `$x === null` reads clearer than `!$x instanceof Some\Long\ClassName`
+        // when the declared type already names the class.
+        ExplicitNullableObjectInstanceRector::class,
+    ])
+    ->withRules([AddNameToLiteralArgumentRector::class]);
