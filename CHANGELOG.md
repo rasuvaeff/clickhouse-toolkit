@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.2 — 2026-11-27
+
+- Docs: the agent skill and the `ClickHouseRawFilter` docblock no longer forbid placeholder names that clash with `p0…`/`ck0…`: since `PlaceholderRemap` such names are renamed on merge.
+
 ## 1.12.1 — 2026-11-21
 
 - Allow `rasuvaeff/context` ^0.4 and ^0.5.

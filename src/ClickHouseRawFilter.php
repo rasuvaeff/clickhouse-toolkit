@@ -13,9 +13,10 @@ use Yiisoft\Data\Reader\FilterInterface;
  * SECURITY: `$sql` is emitted verbatim — never build it from untrusted input.
  * Pass user values through `$params` as bound ClickHouse parameters.
  *
- * Placeholders use the ClickHouse `{name:Type}` syntax. Param names MUST NOT
- * clash with the builder's auto-generated keys (`p0`, `p1`, …) nor with each
- * other when combined with other filters; prefer a distinctive prefix.
+ * Placeholders use the ClickHouse `{name:Type}` syntax. A param name that
+ * clashes with the builder's auto-generated keys (`p0`, `p1`, …) or another
+ * filter's is renamed on merge ({@see PlaceholderRemap}); a distinctive prefix
+ * still keeps the SQL readable.
  *
  * @api
  */
