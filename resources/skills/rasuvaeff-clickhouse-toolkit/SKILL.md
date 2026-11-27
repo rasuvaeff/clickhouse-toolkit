@@ -40,8 +40,10 @@ partitions, mutations and file migrations. Namespace `Rasuvaeff\ClickHouseToolki
    go through the allow-list) or use constants.
 
 4. **`ClickHouseRawFilter` emits its SQL verbatim.** Only trusted, hard-coded
-   SQL; user values go through `{name:Type}` `$params`, and those names must
-   NOT clash with the builder's `p0,p1,…` or the keyset reader's `ck0,ck1,…`.
+   SQL; user values go through `{name:Type}` `$params`. A name that clashes with
+   the builder's `p0,p1,…`, the keyset reader's `ck0,ck1,…` or another filter is
+   renamed on merge (`name_0`, …), so every value stays bound; a distinctive
+   prefix still keeps the SQL readable.
 
 5. **`read()` materializes the whole result.** For large scans use
    `ClickHouseKeysetReader::stream()` (keyset pagination, one page in memory);
