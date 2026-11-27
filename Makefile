@@ -1,4 +1,8 @@
-DOCKER := docker run --rm -v "$(PWD)":/app -w /app composer:2
+# Persistent COMPOSER_HOME: without it the cache lives in the container's /tmp
+# and dies with the container, so every install re-downloads all dist archives
+# (~18s vs ~2.5s warm for a full package). Plain dist cache, no hardlinks —
+# no same-filesystem constraints on the mount.
+DOCKER := docker run --rm -v "$(PWD)":/app -w /app -v "$(HOME)/.composer-docker":/composer-home -e COMPOSER_HOME=/composer-home composer:2
 DOCKER_HOST := docker run --rm --network host -v "$(PWD)":/app -w /app
 PCOV_BOOTSTRAP := apk add --no-cache $$PHPIZE_DEPS >/dev/null && pecl install pcov >/dev/null && docker-php-ext-enable pcov
 

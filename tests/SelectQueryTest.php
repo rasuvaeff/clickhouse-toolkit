@@ -43,7 +43,7 @@ final class SelectQueryTest
             ->aggregate(Aggregate::count(alias: 'orders'))
             ->aggregate(Aggregate::sum(column: 'amount_cents', alias: 'amount_cents'))
             ->groupBy('status')
-            ->orderBy(self::ascending('status'))
+            ->orderBy($this->ascending('status'))
             ->build();
 
         Assert::same(
@@ -63,7 +63,7 @@ final class SelectQueryTest
             ->final()
             ->columns('order_id', 'status', 'amount_cents')
             ->scalar(Scalar::toString(column: 'occurred_at', alias: 'occurred_at'))
-            ->orderBy(self::descending('occurred_at'))
+            ->orderBy($this->descending('occurred_at'))
             ->limit(10)
             ->build();
 
@@ -233,7 +233,7 @@ final class SelectQueryTest
             ->columns('status')
             ->aggregate(Aggregate::count(alias: 'orders'))
             ->groupBy('status')
-            ->orderBy(self::descending('orders'))
+            ->orderBy($this->descending('orders'))
             ->build();
 
         Assert::same(
@@ -248,7 +248,7 @@ final class SelectQueryTest
 
         $query = $builder->select(table: 'events')
             ->columns('id')
-            ->orderBy(self::ascending('id', 'secret'))
+            ->orderBy($this->ascending('id', 'secret'))
             ->build();
 
         Assert::same($query->sql, 'SELECT id FROM events ORDER BY id ASC');
@@ -259,7 +259,7 @@ final class SelectQueryTest
         $builder = new ClickHouseQueryBuilder(allowedFields: [], defaultSort: 'id DESC');
 
         $query = $builder->select(table: 'events')
-            ->orderBy(self::ascending('secret'))
+            ->orderBy($this->ascending('secret'))
             ->build();
 
         Assert::same($query->sql, 'SELECT * FROM events ORDER BY id DESC');
@@ -273,12 +273,12 @@ final class SelectQueryTest
     /**
      * @return Sort sorted by the given fields, ascending, in the order given.
      */
-    private static function ascending(string ...$fields): Sort
+    private function ascending(string ...$fields): Sort
     {
         return Sort::only($fields)->withOrder(array_combine($fields, array_fill(0, count($fields), 'asc')));
     }
 
-    private static function descending(string ...$fields): Sort
+    private function descending(string ...$fields): Sort
     {
         return Sort::only($fields)->withOrder(array_combine($fields, array_fill(0, count($fields), 'desc')));
     }
