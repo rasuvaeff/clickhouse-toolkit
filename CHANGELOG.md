@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.13.0 — 2026-11-28
 
 - Enh #53: Add PHP 8.6 support.
 
