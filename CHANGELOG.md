@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Enh #53: Add PHP 8.6 support.
+
 ## 1.12.2 — 2026-11-27
 
 - Docs: the agent skill and the `ClickHouseRawFilter` docblock no longer forbid placeholder names that clash with `p0…`/`ck0…`: since `PlaceholderRemap` such names are renamed on merge.

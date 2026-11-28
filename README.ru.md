@@ -825,7 +825,7 @@ composer psalm       # static analysis (errorLevel=1)
 CLICKHOUSE_HOST=127.0.0.1 CLICKHOUSE_PASSWORD=… vendor/bin/testo --suite=Integration
 ```
 
-CI запускает `composer build` на PHP 8.3, 8.4 и 8.5.
+CI запускает `composer build` на PHP 8.3, 8.4, 8.5 и 8.6.
 
 ## Лицензия
 
