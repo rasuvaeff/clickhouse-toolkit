@@ -852,7 +852,7 @@ Integration tests in `tests/Integration/` run end-to-end against a real server a
 CLICKHOUSE_HOST=127.0.0.1 CLICKHOUSE_PASSWORD=… vendor/bin/testo --suite=Integration
 ```
 
-CI runs `composer build` on PHP 8.3, 8.4, and 8.5.
+CI runs `composer build` on PHP 8.3, 8.4, 8.5, and 8.6.
 
 ## License
 
